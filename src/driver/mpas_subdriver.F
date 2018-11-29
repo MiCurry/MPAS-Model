@@ -37,6 +37,9 @@ module mpas_subdriver
 #ifdef CORE_DUMMY
    use dummy_core_interface
 #endif
+#ifdef CORE_TERRAIN
+   use terrain_core_interface
+#endif
 
    type (core_type), pointer :: corelist => null()
    type (dm_info), pointer :: dminfo
@@ -191,6 +194,10 @@ module mpas_subdriver
 #ifdef CORE_DUMMY
       call dummy_setup_core(corelist)
       call dummy_setup_domain(domain_ptr)
+#endif
+#ifdef CORE_TERRAIN
+      call terrain_setup_core(corelist)
+      call terrain_setup_domain(domain_ptr)
 #endif
 
       ! Set up the log manager as early as possible so we can use it for any errors/messages during subsequent init steps
