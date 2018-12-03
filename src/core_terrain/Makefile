@@ -1,7 +1,9 @@
 .SUFFIXES: .F .o
 
 OBJS = mpas_terrain_core.o \
-       mpas_terrain_core_interface.o
+       mpas_terrain_core_interface.o \
+	   read_tile.o
+
 
 all: core_terrain
 
@@ -28,7 +30,7 @@ post_build:
 
 mpas_terrain_core_interface.o: mpas_terrain_core.o
 
-mpas_terrain_core.o:
+mpas_terrain_core.o: read_tile.o
 
 clean:
 	$(RM) *.o *.mod *.f90 libdycore.a
@@ -46,3 +48,6 @@ ifeq "$(GEN_F90)" "true"
 else
 	$(FC) $(CPPFLAGS) $(FFLAGS) -c $*.F $(CPPINCLUDES) $(FCINCLUDES) -I../framework -I../operators -I../external/esmf_time_f90
 endif
+
+.c.o:
+	$(CC) $(CFLAGS) $(CPPFLAGS) $(CPPINCLUDES) -I../external/ezxml -c $<
