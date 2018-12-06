@@ -11,283 +11,29 @@ module terrain_core
    use mpas_timekeeping
    use mpas_stream_manager
 
+   use iso_c_binding, only : c_float, c_int
 
    type (MPAS_Clock_type), pointer :: clock
 
    character (len=StrKIND) :: TOPO_DIR_PATH
 
-   contains
-   
-   !***********************************************************************
-   !
-   !  subroutine  init_topo
-   !
-   !> \brief    Initalizes varabiles needed to acces a topo file
-   !> \author   Miles A. Curry
-   !> \date 
-   !> \details  Checks to see that `topo_dir` exists and if so sets the global
-   !>           variable to build off of it later.
-   !>  
-   !
-   !-----------------------------------------------------------------------
-   subroutine init_topo(topo_dir)
-
-      implicit none
-
-      character (len=StrKIND), intent(in) :: topo_dir
-      logical :: res
-
-      inquire(directory=trim(topo_dir), exist=res)
-      if(.not. res) then
-        write(0, *) "ERROR: Topo directory does not exists!"
-        write(0, *) "usage: ./static_test <meshFile> <topo_dir>"
-        stop 
-      end if
-
-      TOPO_DIR_PATH = topo_dir
-   end subroutine init_topo
-
-   !***********************************************************************
-   !
-   !  subroutine check_file(file_path)
-   !
-   !> \brief    Checks to see that the file at file_path exists
-   !> \author   Miles A. Curry
-   !> \date
-   !> \details  Inquires if file at `file_path` exists. if it does return 0
-   !>           and if it does not return 1
-   !>  
-   !
-   !-----------------------------------------------------------------------
-    function check_file(file_path)
-      implicit none
-      character (len=StrKIND), intent(in) :: file_path
-      integer :: check_file
-      logical :: res
-
-      inquire(file=trim(file_path), exist=res)
-      if(.not. res) then
-         write(0, *) "FAILURE!!: This topo file does not exist!: ", trim(file_path)
-         check_file = -1
-         return
-      end if
-      check_file = 0
-    end function check_file
-
-   !***********************************************************************
-   !
-   !  subroutine convert_rads(lat, lon)
-   !
-   !> \brief    convert radians to degrees 
-   !> \author   Miles A. Curry
-   !> \date
-   !>  
-   !
-   !-----------------------------------------------------------------------
-   subroutine convert_rads(lat, lon)
-
-      implicit none
-
-      real (kind=RKIND) :: lat, lon
-      real, parameter :: PI = 4.0 * ATAN(1.0)
-
-      lat = lat * (180/PI)
-      lon = lon * (180/PI)
-      if (lon > 180) then
-         lon = lon - 360
-      end if
-   end subroutine convert_rads
-
-   !***********************************************************************
-   !
-   !  subroutine round_t(val, ds)
-   !
-   !> \brief    Rounds down a value to match the cloest multiple of ds
-   !> \author   Miles A. Curry
-   !> \date
-   !> \details  Rounds a value to the cloest multiple of ds that `val` is
-   !>           greater then and returns that value in `val`
-   !>  
-   !-----------------------------------------------------------------------
-   function round_t(val, ds)
-      integer :: round_t ! Return Value
-      integer, intent(in) :: val
-      integer :: ds      ! The the size of each tile in a diretion
-
-      round_t = val - modulo(val, ds) 
-   end function round_t
-
-   !***********************************************************************
-   !
-   !  subroutine calc_indeices(x, y, dx, dy)
-   !
-   !> \brief    Calculate the indices for a specific x, y in a single tile
-   !> \author   Miles A. Curry
-   !> \date
-   !> \details  Given the global x, y and the changes in x and y (dx, dy)
-   !>           calculate the indicies that contain that x, y in a single tile
-   !>           
-   !>  
-   !-----------------------------------------------------------------------
-   subroutine calc_indicies(x, y, dx, dy)
-
-      implicit none
-      integer, intent(inout) :: x, y
-      integer, intent(in) :: dx, dy
-
-      x = x - round_t(x, dx) + 1
-      y = y - round_t(y, dy) + 1
-
-   end subroutine calc_indicies
-
-
-   !***********************************************************************
-   !
-   !  subroutine conver_cords(lat, lon, x, y)
-   !
-   !> \brief    Convert latitude and longitude cords into their x, y equivalent
-   !> \author   Miles A. Curry
-   !> \date
-   !> \details  Converts latitude and longitude via the following equations:
-   !>
-   !>           Y = 120 ( phi + 90 ) + 1
-   !>           X = 120 ( rho + 180 ) + 1
-   !>  
-   !
-   !-----------------------------------------------------------------------
-   subroutine convert_cords(lat, lon, x, y)
-      implicit none
-
-      real (kind=RKIND), intent(in) :: lat, lon
-      integer :: x, y
-
-      x = int(120 * ( lon + 180 ))
-      y = int(120 * ( lat + 90 ))
-
-   end subroutine convert_cords
-
-   !***********************************************************************
-   !
-   !  function    gen_file(x, y, dx, dy) 
-   !
-   !> \brief    Generates the name of the file in which the lat and lon is stored
-   !> \author   Miles A. Curry
-   !> \date
-   !> \details  
-   !>  
-   !
-   !-----------------------------------------------------------------------
-   function gen_file(x, y, dx, dy)
-      implicit none
-
-      integer, intent(in) :: x, y
-      integer, intent(in) :: dx, dy
-      integer, dimension(2) :: xr, yr
-      character (len=StrKIND), parameter :: FMT1 = "(I5.5, '-', I5.5, '.', I5.5, '-', I5.5)"
+   type tile_t
       character (len=StrKIND) :: fname
-      character (len=StrKIND) :: gen_file
+      type (tile_t), pointer :: next => null()
+      type (tile_t), pointer :: prev => null()
+      real (c_float), dimension(:,:), allocatable :: tile
+      integer, dimension(2) :: x, y ! The tile's range
+   end type tile_t
 
-      xr(1) = x
-      xr(2) = x + dx
-      xr(1) = round_t(xr(1), dx) + 1
-      xr(2) = round_t(xr(2), dx)
+   type (tile_t), target :: tiles
 
-      yr(1) = y
+   integer(KIND=c_int), parameter :: dx = 1200
+   integer(KIND=c_int), parameter :: dy = 1200
+   integer(KIND=c_int), parameter :: x_offset = 6
+   integer(KIND=c_int), parameter :: y_offset = 6
+   integer(KIND=c_int), parameter :: word_size = 2
 
-      if (y == 21600 ) then                        ! Ugly edge cases :(
-          yr(1) = round_t(yr(1)-1, dy) + 1
-          yr(2) = yr(1) + dy
-          yr(2) = round_t(yr(2), dy)
-      else
-          yr(1) = y
-          yr(2) = y + dx
-          yr(1) = round_t(yr(1), dy) + 1
-          yr(2) = round_t(yr(2), dy)
-      end if
-
-
-      write(fname, FMT1) xr(1), xr(2), yr(1), yr(2)
-      gen_file = fname
-
-   end function gen_file
-
-    function get_tile(lat, lon, dx, dy, x_offset, y_offset, word_size, x, y)
-!=============================================================================
-        !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-        !
-        ! get_tile
-        !
-        ! 1. Convert the lat, lon to X and Y
-        !    - (Convert the lat,lon to degrees if needed)
-        ! 2. From the raw X and Y, determine which file they are contained in
-        !   ie round them.
-        !     - getFile(X, Y) - which calls checkFile(fname)
-        ! 3. Get the entire tile by calling read_tile.c.get_tile(...)
-        ! 4. Return the tile
-        !
-        !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-      use iso_c_binding, only : c_int, c_char, c_short, c_float
-      use mpas_log, only : mpas_log_write
-
-      implicit none
-
-      interface
-        function c_get_tile(file, dx, dy, x_offset, y_offset, word_size, tile) bind(C)
-            use iso_c_binding, only : c_int, c_char, c_float
-            character (c_char), intent(in) :: file
-            integer (c_int), intent(in), value :: dx
-            integer (c_int), intent(in), value :: dy
-            integer (c_int), intent(in), value :: x_offset
-            integer (c_int), intent(in), value :: y_offset
-            integer (c_int), intent(in), value :: word_size
-            real (c_float) :: tile(dx, dy)
-        end function c_get_tile
-      end interface
-
-        ! Input variables 
-        real (kind=RKIND), value :: lat, lon
-        integer (c_int), intent(in) :: dx, dy
-        integer (c_int), intent(in) :: x_offset, y_offset
-        integer (c_int), intent(in) :: word_size
-        integer, intent(out) :: x, y
-
-        ! Local Variables
-        real (c_float), dimension(dx + x_offset, dy + y_offset) :: tile, get_tile
-        character (len=StrKIND), parameter :: FILE_PATH_FMT = "(A, A)"
-        character (len=StrKIND) :: fname
-        character (len=StrKIND, KIND=c_char) :: c_fname
-        integer :: ierr
-
-        ! Convert the lat, lon into geogrid x, y
-        call convert_rads(lat, lon)
-        call convert_cords(lat, lon, x, y)
-
-        ! Generate the filename
-        fname = gen_file(x, y, dx, dy)
-        write(c_fname, FILE_PATH_FMT) trim(TOPO_DIR_PATH), trim(fname)
-        c_fname = trim(c_fname)//char(0)    ! Trim and add null a character 
-
-        ! Check to see if the file exists
-        ierr = check_file(c_fname)
-        if(ierr == -1) then 
-            call mpas_log_write("ERROR: File does not exist!")
-            write(0,*) "This file does not exists!", c_fname
-            stop
-        end if
-
-        ! Read in the tile
-        ierr = c_get_tile(trim(c_fname), dx, dy, x_offset, y_offset, word_size, tile)
-        if(ierr == -1) then
-            write(0,*) "ERROR: Error when reading the data from the & 
-                       &tile file:", trim(c_fname)
-            stop
-        end if
-      
-        x = x - round_t(x, 1200) + 1
-        y = y - round_t(y, 1200) + 1
-
-        get_tile = tile
-    end function get_tile
+   contains
 
 
    !***********************************************************************
@@ -374,26 +120,32 @@ module terrain_core
       type (mpas_pool_type), pointer :: mesh
 
       real (kind=RKIND), dimension(:), pointer :: ter
+      integer, dimension(:), allocatable  :: nhs
 
-      integer, pointer :: nCells
       integer :: iErr
       integer :: my_id
       integer :: nCell
+      integer :: iPoint
       integer :: x, y
-
-      integer(KIND=c_int), parameter :: dx = 1200
-      integer(KIND=c_int), parameter :: dy = 1200
-      integer(KIND=c_int), parameter :: x_offset = 6
-      integer(KIND=c_int), parameter :: y_offset = 6
-      integer(KIND=c_int), parameter :: word_size = 2
+      integer :: i, j
 
       real (kind=RKIND), dimension(:), pointer :: latCell, lonCell
+
+      integer, pointer :: nCells, nEdges, maxEdges 
+      integer, dimension(:), pointer :: nEdgesOnCell
+      integer, dimension(:,:), pointer :: cellsOnCell
 
       character(len=StrKIND), pointer :: config_geog_data_path
       character(len=StrKIND), pointer :: config_topo_data
 
       real (c_float), dimension(dx + x_offset, dy + y_offset) :: tile
-      real (kind=RKIND) :: ter_value
+      real (kind=RKIND) :: tval
+      real (kind=RKIND) :: plat, plon
+
+      type (tile_t), pointer :: cur
+
+      ! TODO: This is probably defined somewhere else?
+      real, parameter :: PI = 4.0 * ATAN(1.0)
 
       iErr = 0
    
@@ -406,23 +158,61 @@ module terrain_core
 
       call mpas_pool_get_subpool(block_ptr % structs, 'mesh', mesh)
       call mpas_pool_get_dimension(block_ptr % dimensions, 'nCells', nCells)
+      call mpas_pool_get_dimension(block_ptr % dimensions, 'maxEdges', maxEdges)
 
-      call mpas_pool_get_array(mesh, 'ter', ter)
+      call mpas_pool_get_array(mesh, 'nEdgesOnCell', nEdgesOnCell)
+      call mpas_pool_get_array(mesh, 'cellsOnCell', cellsOnCell)
       call mpas_pool_get_array(mesh, 'latCell', latCell)
       call mpas_pool_get_array(mesh, 'lonCell', lonCell)
+      call mpas_pool_get_array(mesh, 'ter', ter)
 
       my_id = domain % dminfo % my_proc_id    
-
+      allocate(nhs(nCells))
+      nhs(:) = 0
+      
+      ! Read in all the tiles that I am responsible for:
       do nCell = 1, nCells, 1
-         tile = get_tile(latCell(nCell), lonCell(nCell), dx, dy, x_offset, y_offset, word_size, x, y)
-         ter(nCell) = tile(y,x) 
-         if(modulo(nCell, 100) == 0) then
-             call mpas_log_write('YIPPY SKIPPY! TIPY just interoploated another 100 values! Number: $i had val: $r',    &
-                                  intArgs=(/nCell/), &
-                                  realArgs=(/tile(y,x)/))
-         endif
+         ! TODO: Overload get_tile to also be allocate tile
+         tile = get_tile(latCell(nCell), lonCell(nCell))
       enddo
 
+      ! TODO: if statement and a warning?
+      cur => tiles
+      do while( associated(cur%next) )
+         cur=>cur%next
+         tile = cur%tile
+
+         iPoint = 1
+         do i = 4, dx + x_offset
+            do j = 4, dy + y_offset
+               tval = tile(j, i) ! Grab the ter value
+
+               ! Calculate the lat, lon of that tile
+               plat = ( ( j + cur % y(1)) - 1 ) / 120. - 90. + 1/120. * 1/2.
+               plon = ( ( i + cur % x(1)) - 1 ) / 120. - 180. + 1/20. * 1/2.
+
+               plat = plat * PI / 180.0
+               plon = plon * PI / 180.0
+               
+               ! Find which cell this pixel is for
+               iPoint = nearest_cell(plat,plon,iPoint,nCells,maxEdges, &
+                                     nEdgesOnCell,cellsOnCell, &
+                                     latCell,lonCell)
+
+               ! And assign it to its running value
+               ter(iPoint) = ter(iPoint) + tval
+               nhs(iPoint) = nhs(iPoint) + 1
+
+            enddo
+         enddo
+      enddo
+
+      do nCell = 1,nCells
+         ter(nCell) = ter(nCell) / real(nhs(nCell))
+      end do
+
+      call deallocate_tiles() 
+      
       call mpas_stream_mgr_write(domain % streamManager, ierr=ierr)
 
    end function terrain_core_run
@@ -455,5 +245,337 @@ module terrain_core
       call mpas_destroy_clock(clock, iErr)
 
    end function terrain_core_finalize
+
+!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+
+
+   subroutine calc_indicies(lat, lon, x, y)
+
+      implicit none
+      real(kind=RKIND), value :: lat ,lon
+      integer, intent(out) :: x, y
+
+      call convert_rads(lat, lon)
+
+      x = int(120 * ( lon + 180 ))
+      y = int(120 * ( lat + 90 ))
+
+      x = x - round_t(x, dx) + 1
+      y = y - round_t(y, dy) + 1
+
+   end subroutine calc_indicies
+
+   subroutine init_topo(topo_dir)
+
+      implicit none
+
+      character (len=StrKIND), intent(in) :: topo_dir
+      logical :: res
+
+      inquire(directory=trim(topo_dir), exist=res)
+      if(.not. res) then
+        ! Error
+        stop 
+      end if
+
+      TOPO_DIR_PATH = topo_dir
+   end subroutine init_topo
+
+    function check_file(file_path)
+      implicit none
+      character (len=StrKIND), intent(in) :: file_path
+      integer :: check_file
+      logical :: res
+
+      inquire(file=trim(file_path), exist=res)
+      if(.not. res) then
+         write(0, *) "FAILURE!!: This topo file does not exist!: ", trim(file_path)
+         check_file = -1
+         return
+      end if
+      check_file = 0
+    end function check_file
+
+   subroutine convert_rads(lat, lon)
+
+      implicit none
+
+      real (kind=RKIND) :: lat, lon
+      real, parameter :: PI = 4.0 * ATAN(1.0)
+
+      lat = lat * (180/PI)
+      lon = lon * (180/PI)
+      if (lon > 180) then
+         lon = lon - 360
+      end if
+   end subroutine convert_rads
+
+   function round_t(val, ds)
+      integer :: round_t ! Return Value
+      integer, intent(in) :: val
+      integer :: ds      ! The the size of each tile in a diretion
+
+      round_t = val - modulo(val, ds) 
+   end function round_t
+
+   subroutine gen_file(lat, lon, fname, x1, y1)
+      implicit none
+
+      real (kind=RKIND), value :: lat, lon
+      character (len=StrKIND), intent(out) :: fname
+      integer, intent(out) :: x1, y1   ! The start of the tile
+
+      character (len=StrKIND), parameter :: FMT1 = "(I5.5, '-', I5.5, '.', I5.5, '-', I5.5)"
+      integer, dimension(2) :: x, y    ! The x, y ranges for the constructing the filename
+
+      call convert_rads(lat, lon)
+
+      x(1) = int(120 * ( lon + 180 ))
+      y(1) = int(120 * ( lat + 90 ))
+
+      x(2) = x(1) + dx
+      x(1) = round_t(x(1), dx) + 1
+      x(2) = round_t(x(2), dx)
+
+      if (y(1) == 21600 ) then                        ! Ugly edge cases :(
+          y(1) = round_t(y(1)-1, dy) + 1
+          y(2) = y(1) + dy
+          y(2) = round_t(y(2), dy)
+      else
+          y(2) = y(1) + dy
+          y(1) = round_t(y(1), dy) + 1
+          y(2) = round_t(y(2), dy)
+      end if
+
+      write(fname, FMT1) x(1), x(2), y(1), y(2)
+
+      x1 = x(1)
+      y1 = y(1)
+
+   end subroutine gen_file
+
+   !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+   ! Abstraction for getting geogrid files
+   !
+   ! Files/tiles are either:
+   !
+   !  a.) Have been read in from the disk and are in memory 
+   !  or
+   !  b.) Are still on the disk.
+   !
+   ! Get tile will always return a tile, by either finding a tile that is in
+   ! memory or by calling add_tile to read it into memory.
+   !
+   !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+   function get_tile(lat, lon)
+      use iso_c_binding, only : c_int, c_char, c_short, c_float
+      use mpas_log, only : mpas_log_write
+
+      implicit none
+
+      ! Input variables 
+      real (kind=RKIND), value :: lat, lon
+      real (c_float), dimension(dx + x_offset, dy + y_offset) :: tile, get_tile
+
+
+      if ( search_tile(lat, lon, tile) == .TRUE.) then
+         ! pass
+      else
+         call add_tile(lat, lon, tile)
+      endif
+
+      get_tile = tile
+   end function get_tile
+
+   !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+   !
+   ! search_tile - Search the tile list for a tile
+   !
+   ! return: Returns .FALSE. if that file is not in memory and return 
+   !         Returns .TRUE. if that file is in memory and sets `tile` to that 
+   !         tile.
+   !
+   ! Tiles are associated as a dictionary as a linked list with their key being
+   ! the name of the file.
+   !
+   ! Given a latitude and longitute one can generate the tile file that contains
+   ! that location by call gen_file(...).
+   !
+   !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+   function search_tile(lat, lon, tile)
+      implicit none
+
+      ! Input variables
+      real (kind=RKIND), value :: lat, lon
+      real (c_float), dimension(dx + x_offset, dy + y_offset), optional :: tile
+      
+      ! Return value
+      logical :: search_tile
+
+      ! Local variables
+      character (len=StrKIND) :: fname
+      type(tile_t), pointer :: cur
+      type(tile_t) :: tile_s
+      integer :: x, y
+
+      call gen_file(lat, lon, fname, x, y)
+
+      cur => tiles
+      search_tile = .FALSE.
+      do while(associated(cur%next))
+         if(cur%fname == fname) then
+            tile = cur%tile 
+            search_tile = .TRUE.
+            return
+         else
+            cur => cur%next
+         endif
+      enddo
+
+   end function search_tile
+
+   !
+   ! add_tile - Reads in a tile from disk and adds it to the list
+   !
+   subroutine add_tile(lat, lon, tile)
+      use iso_c_binding, only : c_char 
+      implicit none
+      interface
+         integer (c_int) function c_get_tile(file, dx, dy, x_offset, y_offset, word_size, tile) bind(C)
+            use iso_c_binding, only : c_int, c_char, c_float
+            character (c_char), intent(in) :: file
+            integer (c_int), intent(in), value :: dx
+            integer (c_int), intent(in), value :: dy
+            integer (c_int), intent(in), value :: x_offset
+            integer (c_int), intent(in), value :: y_offset
+            integer (c_int), intent(in), value :: word_size
+            real (c_float) :: tile(dx, dy)
+         end function c_get_tile
+      end interface
+      ! Input values
+      real (kind=RKIND), value :: lat, lon
+      real (c_float), dimension(dx + x_offset, dy + y_offset), intent(inout) :: tile
+
+      ! Local variables
+      integer :: x, y
+      character (len=StrKIND) :: fname
+      character (len=StrKIND, kind=c_char) :: c_fname
+      type(tile_t), pointer :: cur
+      type(tile_t), pointer :: tile_s
+
+      allocate(tile_s) ! Allocate the new node and its dynamic array
+      allocate(tile_s%tile(dx + x_offset, dy + y_offset))
+
+      ! TODO: I think there is an module to do this for me?
+      ! Build the filename for the call to the C c_get_tile(...) function
+      call gen_file(lat, lon, fname, x, y)
+      write(c_fname, "(A, A)") trim(TOPO_DIR_PATH), trim(fname)
+      c_fname = trim(c_fname)//char(0)
+
+      
+      if( c_get_tile(trim(c_fname), dx, dy, x_offset, y_offset, word_size, tile_s%tile) == -1 ) then
+          call mpas_log_write("We had a problem reading the geogrid")
+          ! Error
+          stop
+      endif
+
+      tile_s % fname = fname
+      tile_s % x(1) = x
+      tile_s % x(2) = x + dx
+      tile_s % y(1) = y
+      tile_s % y(2) = y + dy
+
+      ! Add the new node to front of the list
+      if( associated(tiles % next ) == .FALSE.) then
+         tiles % next => tile_s
+         tile_s % prev => null()
+      else
+          tiles % next % prev => tile_s
+          tile_s % next => tiles % next
+          tiles % next => tile_s 
+      endif
+      
+      tile = tile_s % tile
+
+   end subroutine add_tile
+
+   subroutine deallocate_tiles()
+
+      implicit none
+
+      type(tile_t), pointer :: cur
+
+      cur => tiles
+      do while(associated(cur%next))
+         cur => cur%next
+         if(associated(cur%prev)) then
+            deallocate(cur%prev)
+         endif
+      enddo
+
+      deallocate(cur)
+      tiles%next=> null()
+
+   end subroutine deallocate_tiles
+
+ integer function nearest_cell(target_lat, target_lon, start_cell, nCells, maxEdges, &
+                               nEdgesOnCell, cellsOnCell, latCell, lonCell)
+!==================================================================================================
+ implicit none
+
+ real (kind=RKIND), intent(in) :: target_lat, target_lon
+ integer, intent(in) :: start_cell
+ integer, intent(in) :: nCells, maxEdges
+ integer, dimension(nCells), intent(in) :: nEdgesOnCell
+ integer, dimension(maxEdges,nCells), intent(in) :: cellsOnCell
+ real (kind=RKIND), dimension(nCells), intent(in) :: latCell, lonCell
+
+ integer :: i
+ integer :: iCell
+ integer :: current_cell
+ real (kind=RKIND) :: current_distance, d
+ real (kind=RKIND) :: nearest_distance
+
+ nearest_cell = start_cell
+ current_cell = -1
+
+ do while (nearest_cell /= current_cell)
+    current_cell = nearest_cell
+    current_distance = sphere_distance(latCell(current_cell), lonCell(current_cell), target_lat, &
+                                       target_lon, 1.0_RKIND)
+    nearest_cell = current_cell
+    nearest_distance = current_distance
+    do i = 1, nEdgesOnCell(current_cell)
+       iCell = cellsOnCell(i,current_cell)
+       if (iCell <= nCells) then
+          d = sphere_distance(latCell(iCell), lonCell(iCell), target_lat, target_lon, 1.0_RKIND)
+          if (d < nearest_distance) then
+             nearest_cell = iCell
+             nearest_distance = d
+          end if
+       end if
+    end do
+ end do
+
+ end function nearest_cell
+
+ real (kind=RKIND) function sphere_distance(lat1, lon1, lat2, lon2, radius)
+
+!Compute the great-circle distance between (lat1, lon1) and (lat2, lon2) on a
+!sphere with given radius.
+!==================================================================================================
+ implicit none
+
+ real (kind=RKIND), intent(in) :: lat1, lon1, lat2, lon2, radius
+ real (kind=RKIND) :: arg1
+ 
+ arg1 = sqrt( sin(0.5*(lat2-lat1))**2 +  &
+              cos(lat1)*cos(lat2)*sin(0.5*(lon2-lon1))**2 )
+
+ sphere_distance = 2.*radius*asin(arg1)
+
+ end function sphere_distance
 
 end module terrain_core
