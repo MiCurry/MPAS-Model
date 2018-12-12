@@ -25,13 +25,19 @@ module terrain_core
       integer, dimension(2) :: x, y ! The tile's range
    end type tile_t
 
+   type hash_table
+      type(tile_t), pointer :: tile
+   end type hash_table
+
    type (tile_t), target :: tiles
+   type (hash_table), allocatable, dimension(:, :) :: tile_hash
 
    integer(KIND=c_int), parameter :: dx = 1200
    integer(KIND=c_int), parameter :: dy = 1200
    integer(KIND=c_int), parameter :: x_offset = 6
    integer(KIND=c_int), parameter :: y_offset = 6
    integer(KIND=c_int), parameter :: word_size = 2
+   integer, parameter :: num_tiles = 649
 
    contains
 
@@ -156,6 +162,8 @@ module terrain_core
 
       TOPO_DIR_PATH = trim(config_geog_data_path)//trim(config_topo_data)//"/"
 
+      allocate(tile_hash(0:35, 0:17)) 
+
       call mpas_pool_get_subpool(block_ptr % structs, 'mesh', mesh)
       call mpas_pool_get_dimension(block_ptr % dimensions, 'nCells', nCells)
       call mpas_pool_get_dimension(block_ptr % dimensions, 'maxEdges', maxEdges)
@@ -177,39 +185,39 @@ module terrain_core
       enddo
 
       ! TODO: if statement and a warning?
-      cur => tiles
-      do while( associated(cur%next) )
-         cur=>cur%next
-         tile = cur%tile
+     ! cur => tiles
+     ! do while( associated(cur%next) )
+     !    cur=>cur%next
+     !    tile = cur%tile
 
-         iPoint = 1
-         do i = 4, dx + x_offset
-            do j = 4, dy + y_offset
-               tval = tile(j, i) ! Grab the ter value
+     !    iPoint = 1
+     !    do i = 4, dx + x_offset
+     !       do j = 4, dy + y_offset
+     !          tval = tile(j, i) ! Grab the ter value
 
-               ! Calculate the lat, lon of that tile
-               plat = ( ( j + cur % y(1)) - 1 ) / 120. - 90. + 1/120. * 1/2.
-               plon = ( ( i + cur % x(1)) - 1 ) / 120. - 180. + 1/20. * 1/2.
+     !          ! Calculate the lat, lon of that tile
+     !          plat = ( ( j + cur % y(1)) - 1 ) / 120. - 90. + 1/120. * 1/2.
+     !          plon = ( ( i + cur % x(1)) - 1 ) / 120. - 180. + 1/20. * 1/2.
 
-               plat = plat * PI / 180.0
-               plon = plon * PI / 180.0
-               
-               ! Find which cell this pixel is for
-               iPoint = nearest_cell(plat,plon,iPoint,nCells,maxEdges, &
-                                     nEdgesOnCell,cellsOnCell, &
-                                     latCell,lonCell)
+     !          plat = plat * PI / 180.0
+     !          plon = plon * PI / 180.0
+     !          
+     !          ! Find which cell this pixel is for
+     !          iPoint = nearest_cell(plat,plon,iPoint,nCells,maxEdges, &
+     !                                nEdgesOnCell,cellsOnCell, &
+     !                                latCell,lonCell)
 
-               ! And assign it to its running value
-               ter(iPoint) = ter(iPoint) + tval
-               nhs(iPoint) = nhs(iPoint) + 1
+     !          ! And assign it to its running value
+     !          ter(iPoint) = ter(iPoint) + tval
+     !          nhs(iPoint) = nhs(iPoint) + 1
 
-            enddo
-         enddo
-      enddo
+     !       enddo
+     !    enddo
+     ! enddo
 
-      do nCell = 1,nCells
-         ter(nCell) = ter(nCell) / real(nhs(nCell))
-      end do
+     ! do nCell = 1,nCells
+     !    ter(nCell) = ter(nCell) / real(nhs(nCell))
+     ! end do
 
       call deallocate_tiles() 
       
@@ -460,6 +468,7 @@ module terrain_core
 
       ! Local variables
       integer :: x, y
+      integer :: H ! Hash Value
       character (len=StrKIND) :: fname
       character (len=StrKIND, kind=c_char) :: c_fname
       type(tile_t), pointer :: cur
@@ -486,6 +495,11 @@ module terrain_core
       tile_s % x(2) = x + dx
       tile_s % y(1) = y
       tile_s % y(2) = y + dy
+
+      
+      tile_hash((( tile_s%x(1) - 1 ) / dx), (( tile_s%y(1) - 1 ) / dy))%tile => tile_s
+
+      write(0,*) "This tile was hashed!"
 
       ! Add the new node to front of the list
       if( associated(tiles % next ) == .FALSE.) then
