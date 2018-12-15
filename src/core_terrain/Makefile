@@ -2,7 +2,8 @@
 
 OBJS = mpas_terrain_core.o \
        mpas_terrain_core_interface.o \
-	   read_tile.o
+	   read_tile.o \
+	   cspeed.o
 
 
 all: core_terrain

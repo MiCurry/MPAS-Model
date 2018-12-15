@@ -11,9 +11,25 @@ module terrain_core
    use mpas_timekeeping
    use mpas_stream_manager
 
-   use iso_c_binding, only : c_float, c_int
+   use iso_c_binding, only : c_float, c_int, c_long
+   
+   interface
+      subroutine timer_start(timer_id) bind(C)
+         use iso_c_binding, only : c_int
+         integer (c_int), intent(in), value :: timer_id
+      end subroutine timer_start
 
+      subroutine timer_stop(timer_id, sec, nsec) bind(C)
+         use iso_c_binding, only : c_int
+         integer (c_int), intent(in), value :: timer_id
+         integer (c_int), intent(out) :: sec, nsec
+      end subroutine timer_stop
+   end interface
+ 
    type (MPAS_Clock_type), pointer :: clock
+
+   real (kind=RKIND) :: search_time_total_sec = 0, search_time_total_nsec = 0
+   real (kind=RKIND) :: add_time_total_sec = 0, add_time_total_nsec=0
 
    character (len=StrKIND) :: TOPO_DIR_PATH
 
@@ -119,6 +135,10 @@ module terrain_core
 
       implicit none
 
+      ! Timing
+      type (MPAS_Time_Type) :: startTime
+      integer (c_int) :: allocate_time=0, interp_time=1, sec, nsec
+
 
       type (domain_type), intent(inout) :: domain
       type (block_type), pointer :: block_ptr
@@ -134,6 +154,7 @@ module terrain_core
       integer :: iPoint
       integer :: x, y
       integer :: i, j
+      integer :: cnt
 
       real (kind=RKIND), dimension(:), pointer :: latCell, lonCell
 
@@ -174,53 +195,75 @@ module terrain_core
       call mpas_pool_get_array(mesh, 'lonCell', lonCell)
       call mpas_pool_get_array(mesh, 'ter', ter)
 
-      my_id = domain % dminfo % my_proc_id    
+      my_id = domain % dminfo % my_proc_id
       allocate(nhs(nCells))
       nhs(:) = 0
       
       ! Read in all the tiles that I am responsible for:
+      call mpas_log_write("Loading in terrain tiles..")
+
+      call mpas_timer_start("static_interp")
+
+      call timer_start(allocate_time)
       do nCell = 1, nCells, 1
-         ! TODO: Overload get_tile to also be allocate tile
-         tile = get_tile(latCell(nCell), lonCell(nCell))
+         tile = get_tile(latCell(nCell), lonCell(nCell)) ! TODO: Overload get_tile to also be allocate tile
       enddo
+      call timer_stop(allocate_time, sec, nsec)
+      
+      call mpas_log_write("Allocation finished time was: $i secs + $i nsec for $i cells", intArgs=(/int(sec), int(nsec), nCells/))
 
-      ! TODO: if statement and a warning?
-     ! cur => tiles
-     ! do while( associated(cur%next) )
-     !    cur=>cur%next
-     !    tile = cur%tile
+      !TODO: if statement and a warning on associated(cur%next)?
+      call mpas_log_write("About to interpolate terrain data values to mesh...")
 
-     !    iPoint = 1
-     !    do i = 4, dx + x_offset
-     !       do j = 4, dy + y_offset
-     !          tval = tile(j, i) ! Grab the ter value
+      call timer_start(interp_time)
+      cur => tiles
+      cnt = 1
 
-     !          ! Calculate the lat, lon of that tile
-     !          plat = ( ( j + cur % y(1)) - 1 ) / 120. - 90. + 1/120. * 1/2.
-     !          plon = ( ( i + cur % x(1)) - 1 ) / 120. - 180. + 1/20. * 1/2.
+      ! Loop through all the tiles
+      do while( associated(cur%next) )
+         cnt = cnt + 1
 
-     !          plat = plat * PI / 180.0
-     !          plon = plon * PI / 180.0
-     !          
-     !          ! Find which cell this pixel is for
-     !          iPoint = nearest_cell(plat,plon,iPoint,nCells,maxEdges, &
-     !                                nEdgesOnCell,cellsOnCell, &
-     !                                latCell,lonCell)
+         cur=>cur%next
+         tile = cur%tile
+   
+         iPoint = 1
+         do i = 1 + x_offset, dx + x_offset
+            do j = 1 + y_offset, dy + y_offset
+               tval = tile(j, i) ! Grab the terrain value
 
-     !          ! And assign it to its running value
-     !          ter(iPoint) = ter(iPoint) + tval
-     !          nhs(iPoint) = nhs(iPoint) + 1
+               ! Calculate the lat, lon of that tile
+               plat = ( ( j + cur % y(1)) - (1 + y_offset)) / 120. - 90. + 1/120. * 1/2.
+               plon = ( ( i + cur % x(1)) - (1 + x_offset)) / 120. - 180. + 1/20. * 1/2.
 
-     !       enddo
-     !    enddo
-     ! enddo
+               plat = plat * PI / 180.0
+               plon = plon * PI / 180.0
+               
+               ! Find which mesh cell this pixel is for
+               iPoint = nearest_cell(plat,plon,iPoint,nCells,maxEdges, &
+                                     nEdgesOnCell,cellsOnCell, &
+                                     latCell,lonCell)
 
-     ! do nCell = 1,nCells
-     !    ter(nCell) = ter(nCell) / real(nhs(nCell))
-     ! end do
+               ! And assign it to its running average
+               ter(iPoint) = ter(iPoint) + tval
+               nhs(iPoint) = nhs(iPoint) + 1
+
+            enddo
+         enddo
+      enddo
+      call timer_stop(interp_time, sec, nsec)
+      call mpas_log_write("Interp finished time was: $i secs + $i nsec", intArgs=(/int(sec), int(nsec)/))
+
+      do nCell = 1,nCells
+         ter(nCell) = ter(nCell) / real(nhs(nCell))
+      end do
 
       call deallocate_tiles() 
+
+      call mpas_timer_stop("static_interp")
       
+      call mpas_log_write("Total searchtime: $r s $r ns", realArgs=(/search_time_total_sec, search_time_total_nsec/))
+      call mpas_log_write("Total addtime: $r s $r ns", realArgs=(/add_time_total_sec, add_time_total_nsec/))
+
       call mpas_stream_mgr_write(domain % streamManager, ierr=ierr)
 
    end function terrain_core_run
@@ -259,21 +302,6 @@ module terrain_core
 !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
 
 
-   subroutine calc_indicies(lat, lon, x, y)
-
-      implicit none
-      real(kind=RKIND), value :: lat ,lon
-      integer, intent(out) :: x, y
-
-      call convert_rads(lat, lon)
-
-      x = int(120 * ( lon + 180 ))
-      y = int(120 * ( lat + 90 ))
-
-      x = x - round_t(x, dx) + 1
-      y = y - round_t(y, dy) + 1
-
-   end subroutine calc_indicies
 
    subroutine init_topo(topo_dir)
 
@@ -282,7 +310,7 @@ module terrain_core
       character (len=StrKIND), intent(in) :: topo_dir
       logical :: res
 
-      inquire(directory=trim(topo_dir), exist=res)
+      inquire(file=trim(topo_dir), exist=res)
       if(.not. res) then
         ! Error
         stop 
@@ -291,78 +319,6 @@ module terrain_core
       TOPO_DIR_PATH = topo_dir
    end subroutine init_topo
 
-    function check_file(file_path)
-      implicit none
-      character (len=StrKIND), intent(in) :: file_path
-      integer :: check_file
-      logical :: res
-
-      inquire(file=trim(file_path), exist=res)
-      if(.not. res) then
-         write(0, *) "FAILURE!!: This topo file does not exist!: ", trim(file_path)
-         check_file = -1
-         return
-      end if
-      check_file = 0
-    end function check_file
-
-   subroutine convert_rads(lat, lon)
-
-      implicit none
-
-      real (kind=RKIND) :: lat, lon
-      real, parameter :: PI = 4.0 * ATAN(1.0)
-
-      lat = lat * (180/PI)
-      lon = lon * (180/PI)
-      if (lon > 180) then
-         lon = lon - 360
-      end if
-   end subroutine convert_rads
-
-   function round_t(val, ds)
-      integer :: round_t ! Return Value
-      integer, intent(in) :: val
-      integer :: ds      ! The the size of each tile in a diretion
-
-      round_t = val - modulo(val, ds) 
-   end function round_t
-
-   subroutine gen_file(lat, lon, fname, x1, y1)
-      implicit none
-
-      real (kind=RKIND), value :: lat, lon
-      character (len=StrKIND), intent(out) :: fname
-      integer, intent(out) :: x1, y1   ! The start of the tile
-
-      character (len=StrKIND), parameter :: FMT1 = "(I5.5, '-', I5.5, '.', I5.5, '-', I5.5)"
-      integer, dimension(2) :: x, y    ! The x, y ranges for the constructing the filename
-
-      call convert_rads(lat, lon)
-
-      x(1) = int(120 * ( lon + 180 ))
-      y(1) = int(120 * ( lat + 90 ))
-
-      x(2) = x(1) + dx
-      x(1) = round_t(x(1), dx) + 1
-      x(2) = round_t(x(2), dx)
-
-      if (y(1) == 21600 ) then                        ! Ugly edge cases :(
-          y(1) = round_t(y(1)-1, dy) + 1
-          y(2) = y(1) + dy
-          y(2) = round_t(y(2), dy)
-      else
-          y(2) = y(1) + dy
-          y(1) = round_t(y(1), dy) + 1
-          y(2) = round_t(y(2), dy)
-      end if
-
-      write(fname, FMT1) x(1), x(2), y(1), y(2)
-
-      x1 = x(1)
-      y1 = y(1)
-
-   end subroutine gen_file
 
    !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
    ! Abstraction for getting geogrid files
@@ -387,11 +343,21 @@ module terrain_core
       real (kind=RKIND), value :: lat, lon
       real (c_float), dimension(dx + x_offset, dy + y_offset) :: tile, get_tile
 
+      integer (c_int) :: search_time = 2, add_time = 3, sec, nsec
+      logical :: search_res 
 
-      if ( search_tile(lat, lon, tile) == .TRUE.) then
+      call timer_start(search_time) 
+      search_res = search_tile(lat, lon, tile)
+      call timer_stop(search_time, sec, nsec)
+      search_time_total_sec = search_time_total_sec + sec + nsec * 10e-9 
+
+      if ( search_res ) then
          ! pass
       else
+         call timer_start(add_time)
          call add_tile(lat, lon, tile)
+         call timer_stop(add_time, sec, nsec)
+         add_time_total_sec = add_time_total_sec + sec + nsec * 10e-9
       endif
 
       get_tile = tile
@@ -483,7 +449,6 @@ module terrain_core
       write(c_fname, "(A, A)") trim(TOPO_DIR_PATH), trim(fname)
       c_fname = trim(c_fname)//char(0)
 
-      
       if( c_get_tile(trim(c_fname), dx, dy, x_offset, y_offset, word_size, tile_s%tile) == -1 ) then
           call mpas_log_write("We had a problem reading the geogrid")
           ! Error
@@ -496,13 +461,10 @@ module terrain_core
       tile_s % y(1) = y
       tile_s % y(2) = y + dy
 
-      
       tile_hash((( tile_s%x(1) - 1 ) / dx), (( tile_s%y(1) - 1 ) / dy))%tile => tile_s
 
-      write(0,*) "This tile was hashed!"
-
       ! Add the new node to front of the list
-      if( associated(tiles % next ) == .FALSE.) then
+      if( .NOT. associated(tiles % next ) ) then
          tiles % next => tile_s
          tile_s % prev => null()
       else
@@ -533,6 +495,95 @@ module terrain_core
       tiles%next=> null()
 
    end subroutine deallocate_tiles
+
+    function check_file(file_path)
+      implicit none
+      character (len=StrKIND), intent(in) :: file_path
+      integer :: check_file
+      logical :: res
+
+      inquire(file=trim(file_path), exist=res)
+      if(.not. res) then
+         write(0, *) "FAILURE!!: This topo file does not exist!: ", trim(file_path)
+         check_file = -1
+         return
+      end if
+      check_file = 0
+    end function check_file
+
+   subroutine convert_rads(lat, lon)
+
+      implicit none
+
+      real (kind=RKIND) :: lat, lon
+      real, parameter :: PI = 4.0 * ATAN(1.0)
+
+      lat = lat * (180/PI)
+      lon = lon * (180/PI)
+      if (lon > 180) then
+         lon = lon - 360
+      end if
+   end subroutine convert_rads
+
+   function round_t(val, ds)
+      integer :: round_t ! Return Value
+      integer, intent(in) :: val
+      integer :: ds      ! The the size of each tile in a diretion
+
+      round_t = val - modulo(val, ds) 
+   end function round_t
+
+   subroutine gen_file(lat, lon, fname, x1, y1)
+      implicit none
+
+      real (kind=RKIND), value :: lat, lon
+      character (len=StrKIND), intent(out) :: fname
+      integer, intent(out) :: x1, y1   ! The start of the tile
+
+      character (len=StrKIND), parameter :: FMT1 = "(I5.5, '-', I5.5, '.', I5.5, '-', I5.5)"
+      integer, dimension(2) :: x, y    ! The x, y ranges for the constructing the filename
+
+      call convert_rads(lat, lon)
+
+      x(1) = int(120 * ( lon + 180 ))
+      y(1) = int(120 * ( lat + 90 ))
+
+      x(2) = x(1) + dx
+      x(1) = round_t(x(1), dx) + 1
+      x(2) = round_t(x(2), dx)
+
+      if (y(1) == 21600 ) then                        ! Ugly edge cases :(
+          y(1) = round_t(y(1)-1, dy) + 1
+          y(2) = y(1) + dy
+          y(2) = round_t(y(2), dy)
+      else
+          y(2) = y(1) + dy
+          y(1) = round_t(y(1), dy) + 1
+          y(2) = round_t(y(2), dy)
+      end if
+
+      write(fname, FMT1) x(1), x(2), y(1), y(2)
+
+      x1 = x(1)
+      y1 = y(1)
+
+   end subroutine gen_file
+
+   subroutine calc_indicies(lat, lon, x, y)
+
+      implicit none
+      real(kind=RKIND), value :: lat ,lon
+      integer, intent(out) :: x, y
+
+      call convert_rads(lat, lon)
+
+      x = int(120 * ( lon + 180 ))
+      y = int(120 * ( lat + 90 ))
+
+      x = x - round_t(x, dx) + 1
+      y = y - round_t(y, dy) + 1
+
+   end subroutine calc_indicies
 
  integer function nearest_cell(target_lat, target_lon, start_cell, nCells, maxEdges, &
                                nEdgesOnCell, cellsOnCell, latCell, lonCell)
