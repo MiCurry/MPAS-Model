@@ -39,21 +39,16 @@ module terrain_core
       type (tile_t), pointer :: prev => null()
       real (c_float), dimension(:,:), allocatable :: tile
       integer, dimension(2) :: x, y ! The tile's range
+      integer :: val ! The value to sort on
    end type tile_t
 
-   type hash_table
-      type(tile_t), pointer :: tile
-   end type hash_table
-
    type (tile_t), target :: tiles
-   type (hash_table), allocatable, dimension(:, :) :: tile_hash
 
-   integer(KIND=c_int), parameter :: dx = 1200
-   integer(KIND=c_int), parameter :: dy = 1200
-   integer(KIND=c_int), parameter :: x_offset = 6
-   integer(KIND=c_int), parameter :: y_offset = 6
+   integer(KIND=c_int), parameter :: nx = 1200
+   integer(KIND=c_int), parameter :: ny = 1200
+   integer(KIND=c_int), parameter :: x_halo = 6
+   integer(KIND=c_int), parameter :: y_halo = 6
    integer(KIND=c_int), parameter :: word_size = 2
-   integer, parameter :: num_tiles = 649
 
    contains
 
@@ -165,7 +160,7 @@ module terrain_core
       character(len=StrKIND), pointer :: config_geog_data_path
       character(len=StrKIND), pointer :: config_topo_data
 
-      real (c_float), dimension(dx + x_offset, dy + y_offset) :: tile
+      real (c_float), dimension(nx + x_halo, ny + y_halo) :: tile
       real (kind=RKIND) :: tval
       real (kind=RKIND) :: plat, plon
 
@@ -182,8 +177,6 @@ module terrain_core
       call mpas_pool_get_config(block_ptr % configs, 'config_topo_data', config_topo_data)
 
       TOPO_DIR_PATH = trim(config_geog_data_path)//trim(config_topo_data)//"/"
-
-      allocate(tile_hash(0:35, 0:17)) 
 
       call mpas_pool_get_subpool(block_ptr % structs, 'mesh', mesh)
       call mpas_pool_get_dimension(block_ptr % dimensions, 'nCells', nCells)
@@ -227,13 +220,13 @@ module terrain_core
          tile = cur%tile
    
          iPoint = 1
-         do i = 1 + x_offset, dx + x_offset
-            do j = 1 + y_offset, dy + y_offset
+         do i = 1 + x_halo, nx !+ x_halo
+            do j = 1 + y_halo, ny !+ y_halo
                tval = tile(j, i) ! Grab the terrain value
 
                ! Calculate the lat, lon of that tile
-               plat = ( ( j + cur % y(1)) - (1 + y_offset)) / 120. - 90. + 1/120. * 1/2.
-               plon = ( ( i + cur % x(1)) - (1 + x_offset)) / 120. - 180. + 1/20. * 1/2.
+               plat = ( ( j + cur % y(1)) - (1 + y_halo)) / 120. - 90. + 1/120. * 1/2.
+               plon = ( ( i + cur % x(1)) - (1 + x_halo)) / 120. - 180. + 1/20. * 1/2.
 
                plat = plat * PI / 180.0
                plon = plon * PI / 180.0
@@ -301,8 +294,6 @@ module terrain_core
 !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
 !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
 
-
-
    subroutine init_topo(topo_dir)
 
       implicit none
@@ -341,7 +332,7 @@ module terrain_core
 
       ! Input variables 
       real (kind=RKIND), value :: lat, lon
-      real (c_float), dimension(dx + x_offset, dy + y_offset) :: tile, get_tile
+      real (c_float), dimension(nx + x_halo, ny + y_halo) :: tile, get_tile
 
       integer (c_int) :: search_time = 2, add_time = 3, sec, nsec
       logical :: search_res 
@@ -383,7 +374,7 @@ module terrain_core
 
       ! Input variables
       real (kind=RKIND), value :: lat, lon
-      real (c_float), dimension(dx + x_offset, dy + y_offset), optional :: tile
+      real (c_float), dimension(nx + x_halo, ny + y_halo), optional :: tile
       
       ! Return value
       logical :: search_tile
@@ -399,7 +390,7 @@ module terrain_core
       cur => tiles
       search_tile = .FALSE.
       do while(associated(cur%next))
-         if(cur%fname == fname) then
+         if(trim(cur%fname) == trim(fname)) then
             tile = cur%tile 
             search_tile = .TRUE.
             return
@@ -417,20 +408,20 @@ module terrain_core
       use iso_c_binding, only : c_char 
       implicit none
       interface
-         integer (c_int) function c_get_tile(file, dx, dy, x_offset, y_offset, word_size, tile) bind(C)
+         integer (c_int) function c_get_tile(file, nx, ny, x_halo, y_halo, word_size, tile) bind(C)
             use iso_c_binding, only : c_int, c_char, c_float
             character (c_char), intent(in) :: file
-            integer (c_int), intent(in), value :: dx
-            integer (c_int), intent(in), value :: dy
-            integer (c_int), intent(in), value :: x_offset
-            integer (c_int), intent(in), value :: y_offset
+            integer (c_int), intent(in), value :: nx
+            integer (c_int), intent(in), value :: ny
+            integer (c_int), intent(in), value :: x_halo
+            integer (c_int), intent(in), value :: y_halo
             integer (c_int), intent(in), value :: word_size
-            real (c_float) :: tile(dx, dy)
+            real (c_float) :: tile(nx, ny)
          end function c_get_tile
       end interface
       ! Input values
       real (kind=RKIND), value :: lat, lon
-      real (c_float), dimension(dx + x_offset, dy + y_offset), intent(inout) :: tile
+      real (c_float), dimension(nx + x_halo, ny + y_halo), intent(inout) :: tile
 
       ! Local variables
       integer :: x, y
@@ -440,8 +431,8 @@ module terrain_core
       type(tile_t), pointer :: cur
       type(tile_t), pointer :: tile_s
 
-      allocate(tile_s) ! Allocate the new node and its dynamic array
-      allocate(tile_s%tile(dx + x_offset, dy + y_offset))
+      allocate(tile_s) ! Allocate the new node and its nynamic array
+      allocate(tile_s%tile(nx + x_halo, ny + y_halo))
 
       ! TODO: I think there is an module to do this for me?
       ! Build the filename for the call to the C c_get_tile(...) function
@@ -449,7 +440,7 @@ module terrain_core
       write(c_fname, "(A, A)") trim(TOPO_DIR_PATH), trim(fname)
       c_fname = trim(c_fname)//char(0)
 
-      if( c_get_tile(trim(c_fname), dx, dy, x_offset, y_offset, word_size, tile_s%tile) == -1 ) then
+      if( c_get_tile(trim(c_fname), nx, ny, x_halo, y_halo, word_size, tile_s%tile) == -1 ) then
           call mpas_log_write("We had a problem reading the geogrid")
           ! Error
           stop
@@ -457,11 +448,13 @@ module terrain_core
 
       tile_s % fname = fname
       tile_s % x(1) = x
-      tile_s % x(2) = x + dx
+      tile_s % x(2) = x + nx - 1
       tile_s % y(1) = y
-      tile_s % y(2) = y + dy
+      tile_s % y(2) = y + ny - 1
 
-      tile_hash((( tile_s%x(1) - 1 ) / dx), (( tile_s%y(1) - 1 ) / dy))%tile => tile_s
+      tile_s % val = ( 18 * ((tile_s%x(1)-1)/nx)) + ((tile_s%y(1)-1)/ny) 
+
+      !write(0,*) tile_s%val, tile_s%x(1), tile_s%y(1), trim(tile_s%fname)
 
       ! Add the new node to front of the list
       if( .NOT. associated(tiles % next ) ) then
@@ -548,18 +541,18 @@ module terrain_core
       x(1) = int(120 * ( lon + 180 ))
       y(1) = int(120 * ( lat + 90 ))
 
-      x(2) = x(1) + dx
-      x(1) = round_t(x(1), dx) + 1
-      x(2) = round_t(x(2), dx)
+      x(2) = x(1) + nx
+      x(1) = round_t(x(1), nx) + 1
+      x(2) = round_t(x(2), nx)
 
       if (y(1) == 21600 ) then                        ! Ugly edge cases :(
-          y(1) = round_t(y(1)-1, dy) + 1
-          y(2) = y(1) + dy
-          y(2) = round_t(y(2), dy)
+          y(1) = round_t(y(1)-1, ny) + 1
+          y(2) = y(1) + ny
+          y(2) = round_t(y(2), ny)
       else
-          y(2) = y(1) + dy
-          y(1) = round_t(y(1), dy) + 1
-          y(2) = round_t(y(2), dy)
+          y(2) = y(1) + ny
+          y(1) = round_t(y(1), ny) + 1
+          y(2) = round_t(y(2), ny)
       end if
 
       write(fname, FMT1) x(1), x(2), y(1), y(2)
@@ -580,8 +573,8 @@ module terrain_core
       x = int(120 * ( lon + 180 ))
       y = int(120 * ( lat + 90 ))
 
-      x = x - round_t(x, dx) + 1
-      y = y - round_t(y, dy) + 1
+      x = x - round_t(x, nx) + 1
+      y = y - round_t(y, ny) + 1
 
    end subroutine calc_indicies
 
