@@ -11,7 +11,7 @@ module terrain_core
    use mpas_timekeeping
    use mpas_stream_manager
 
-   use iso_c_binding, only : c_float, c_int, c_long
+   use iso_c_binding, only : c_float, c_int, c_long, c_loc, c_ptr
    
    interface
       subroutine timer_start(timer_id) bind(C)
@@ -37,7 +37,7 @@ module terrain_core
       character (len=StrKIND) :: fname
       type (tile_t), pointer :: next => null()
       type (tile_t), pointer :: prev => null()
-      real (c_float), dimension(:,:), allocatable :: tile
+      real (c_float), dimension(:,:), pointer, contiguous :: tile
       integer, dimension(2) :: x, y ! The tile's range
       integer :: val ! The value to sort on
    end type tile_t
@@ -149,7 +149,7 @@ module terrain_core
       integer :: iPoint
       integer :: x, y
       integer :: i, j
-      integer :: cnt
+      integer :: cnt = 0
 
       real (kind=RKIND), dimension(:), pointer :: latCell, lonCell
 
@@ -160,11 +160,11 @@ module terrain_core
       character(len=StrKIND), pointer :: config_geog_data_path
       character(len=StrKIND), pointer :: config_topo_data
 
-      real (c_float), dimension(nx + x_halo, ny + y_halo) :: tile
       real (kind=RKIND) :: tval
       real (kind=RKIND) :: plat, plon
 
-      type (tile_t), pointer :: cur
+      type (tile_t), pointer :: cur => null()
+      type (tile_t), pointer :: tile => null()
 
       ! TODO: This is probably defined somewhere else?
       real, parameter :: PI = 4.0 * ATAN(1.0)
@@ -193,36 +193,39 @@ module terrain_core
       nhs(:) = 0
       
       ! Read in all the tiles that I am responsible for:
-      call mpas_log_write("Loading in terrain tiles..")
-
       call mpas_timer_start("static_interp")
 
-      call timer_start(allocate_time)
-      do nCell = 1, nCells, 1
-         tile = get_tile(latCell(nCell), lonCell(nCell)) ! TODO: Overload get_tile to also be allocate tile
-      enddo
-      call timer_stop(allocate_time, sec, nsec)
-      
-      call mpas_log_write("Allocation finished time was: $i secs + $i nsec for $i cells", intArgs=(/int(sec), int(nsec), nCells/))
+   
+      call mpas_log_write("Loading in terrain tiles..")
+      call mpas_timer_start("tile allocation")
 
-      !TODO: if statement and a warning on associated(cur%next)?
+      do nCell = 1, nCells, 1
+         call get_tile(latCell(nCell), lonCell(nCell), tile) ! TODO: Overload get_tile to also be allocate tile
+   
+         if (modulo(nCell, 10) == 0 ) then
+            call mpas_log_write("We allocated read 10 cells: $i", intArgs=(/nCell/))
+         endif
+      enddo
+
+      call mpas_timer_stop("tile allocation")
       call mpas_log_write("About to interpolate terrain data values to mesh...")
 
-      call timer_start(interp_time)
       cur => tiles
-      cnt = 1
 
       ! Loop through all the tiles
       do while( associated(cur%next) )
          cnt = cnt + 1
 
-         cur=>cur%next
-         tile = cur%tile
+         if ( modulo(cnt, 10) == 0) then
+            call mpas_log_write("We proccessed 10 tiles: $i", intArgs=(/cnt/))
+         endif
+
+         cur => cur%next
    
          iPoint = 1
-         do i = 1 + x_halo, nx !+ x_halo
-            do j = 1 + y_halo, ny !+ y_halo
-               tval = tile(j, i) ! Grab the terrain value
+         do i = 1 + 3, nx !+ x_halo
+            do j = 1 + 3, ny !+ y_halo
+               tval = cur%tile(j, i) ! Grab the terrain value
 
                ! Calculate the lat, lon of that tile
                plat = ( ( j + cur % y(1)) - (1 + y_halo)) / 120. - 90. + 1/120. * 1/2.
@@ -243,8 +246,6 @@ module terrain_core
             enddo
          enddo
       enddo
-      call timer_stop(interp_time, sec, nsec)
-      call mpas_log_write("Interp finished time was: $i secs + $i nsec", intArgs=(/int(sec), int(nsec)/))
 
       do nCell = 1,nCells
          ter(nCell) = ter(nCell) / real(nhs(nCell))
@@ -253,9 +254,6 @@ module terrain_core
       call deallocate_tiles() 
 
       call mpas_timer_stop("static_interp")
-      
-      call mpas_log_write("Total searchtime: $r s $r ns", realArgs=(/search_time_total_sec, search_time_total_nsec/))
-      call mpas_log_write("Total addtime: $r s $r ns", realArgs=(/add_time_total_sec, add_time_total_nsec/))
 
       call mpas_stream_mgr_write(domain % streamManager, ierr=ierr)
 
@@ -294,6 +292,18 @@ module terrain_core
 !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
 !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
 
+   !***********************************************************************
+   !
+   !  function init_topo
+   !
+   !> \brief   Initalize terrain core
+   !> \author  
+   !> \date    
+   !> \details This function insures that the topo_dir supplied in
+   !>  the namelist exists. And sets it to the global variable TOPO_DIR_PATH
+   !> 
+   !
+   !-----------------------------------------------------------------------
    subroutine init_topo(topo_dir)
 
       implicit none
@@ -311,20 +321,22 @@ module terrain_core
    end subroutine init_topo
 
 
-   !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-   ! Abstraction for getting geogrid files
+   !***********************************************************************
    !
-   ! Files/tiles are either:
+   !  function get_tile
    !
-   !  a.) Have been read in from the disk and are in memory 
-   !  or
-   !  b.) Are still on the disk.
+   !> \brief   Retrive the tile associated with coordinates lat and long
+   !> \author  Miles Curry
+   !> \date    
+   !> \details 
+   !>    This function is an abstraction for reading values from a tile file.
+   !> It enables the tiles to be read in from disk once and only once.
+   !>
+   !> It does this by either a. 
+   !> 
    !
-   ! Get tile will always return a tile, by either finding a tile that is in
-   ! memory or by calling add_tile to read it into memory.
-   !
-   !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-   function get_tile(lat, lon)
+   !-----------------------------------------------------------------------
+   subroutine get_tile(lat, lon, tile)
       use iso_c_binding, only : c_int, c_char, c_short, c_float
       use mpas_log, only : mpas_log_write
 
@@ -332,49 +344,40 @@ module terrain_core
 
       ! Input variables 
       real (kind=RKIND), value :: lat, lon
-      real (c_float), dimension(nx + x_halo, ny + y_halo) :: tile, get_tile
+      type (tile_t), pointer :: tile => null()
 
-      integer (c_int) :: search_time = 2, add_time = 3, sec, nsec
-      logical :: search_res 
+      logical :: search_res
 
-      call timer_start(search_time) 
+      ! TODO: Comment this function
+
       search_res = search_tile(lat, lon, tile)
-      call timer_stop(search_time, sec, nsec)
-      search_time_total_sec = search_time_total_sec + sec + nsec * 10e-9 
 
       if ( search_res ) then
          ! pass
       else
-         call timer_start(add_time)
          call add_tile(lat, lon, tile)
-         call timer_stop(add_time, sec, nsec)
-         add_time_total_sec = add_time_total_sec + sec + nsec * 10e-9
       endif
 
-      get_tile = tile
-   end function get_tile
+   end subroutine get_tile
 
-   !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+   !***********************************************************************
    !
-   ! search_tile - Search the tile list for a tile
+   !  function terrain_core_finalize
    !
-   ! return: Returns .FALSE. if that file is not in memory and return 
-   !         Returns .TRUE. if that file is in memory and sets `tile` to that 
-   !         tile.
+   !> \brief   MPAS Core Finalization Function
+   !> \author  Doug Jacobsen
+   !> \date    04/06/2015 !> \details 
+   !>  This function finalizes the MPAS core. It should at a minimum destroy the
+   !>  simulation clock, but can perform any functions necessary to clean up the
+   !>  MPAS core.
    !
-   ! Tiles are associated as a dictionary as a linked list with their key being
-   ! the name of the file.
-   !
-   ! Given a latitude and longitute one can generate the tile file that contains
-   ! that location by call gen_file(...).
-   !
-   !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+   !-----------------------------------------------------------------------
    function search_tile(lat, lon, tile)
       implicit none
 
       ! Input variables
       real (kind=RKIND), value :: lat, lon
-      real (c_float), dimension(nx + x_halo, ny + y_halo), optional :: tile
+      type (tile_t), pointer :: tile => null()
       
       ! Return value
       logical :: search_tile
@@ -384,14 +387,17 @@ module terrain_core
       type(tile_t), pointer :: cur
       type(tile_t) :: tile_s
       integer :: x, y
+      integer :: val
 
       call gen_file(lat, lon, fname, x, y)
+
+      val = ( 18 * ((x-1)/nx)) + ((y-1)/ny) 
 
       cur => tiles
       search_tile = .FALSE.
       do while(associated(cur%next))
-         if(trim(cur%fname) == trim(fname)) then
-            tile = cur%tile 
+         if(trim(cur%fname) == trim(fname) .OR. cur%val == val ) then
+            tile => cur
             search_tile = .TRUE.
             return
          else
@@ -401,27 +407,42 @@ module terrain_core
 
    end function search_tile
 
+   
+   !***********************************************************************
    !
-   ! add_tile - Reads in a tile from disk and adds it to the list
+   !  function terrain_core_finalize
    !
+   !> \brief   MPAS Core Finalization Function
+   !> \author  Doug Jacobsen
+   !> \date    04/06/2015 !> \details 
+   !>  This function finalizes the MPAS core. It should at a minimum destroy the
+   !>  simulation clock, but can perform any functions necessary to clean up the
+   !>  MPAS core.
+   !
+   !-----------------------------------------------------------------------
    subroutine add_tile(lat, lon, tile)
+
+      use mpas_c_interfacing, only : mpas_f_to_c_string
       use iso_c_binding, only : c_char 
+
       implicit none
+
       interface
          integer (c_int) function c_get_tile(file, nx, ny, x_halo, y_halo, word_size, tile) bind(C)
-            use iso_c_binding, only : c_int, c_char, c_float
+            use iso_c_binding, only : c_int, c_char, c_float, c_ptr
             character (c_char), intent(in) :: file
             integer (c_int), intent(in), value :: nx
             integer (c_int), intent(in), value :: ny
             integer (c_int), intent(in), value :: x_halo
             integer (c_int), intent(in), value :: y_halo
             integer (c_int), intent(in), value :: word_size
-            real (c_float) :: tile(nx, ny)
+            type (c_ptr), value :: tile
          end function c_get_tile
       end interface
+
       ! Input values
       real (kind=RKIND), value :: lat, lon
-      real (c_float), dimension(nx + x_halo, ny + y_halo), intent(inout) :: tile
+      type (tile_t), pointer :: tile => null()
 
       ! Local variables
       integer :: x, y
@@ -429,47 +450,69 @@ module terrain_core
       character (len=StrKIND) :: fname
       character (len=StrKIND, kind=c_char) :: c_fname
       type(tile_t), pointer :: cur
-      type(tile_t), pointer :: tile_s
 
-      allocate(tile_s) ! Allocate the new node and its nynamic array
-      allocate(tile_s%tile(nx + x_halo, ny + y_halo))
+      type(c_ptr) :: tile_ptr
+
+      allocate(tile) ! Allocate the new node and its array to hold the tile
+      allocate(tile%tile(nx + x_halo, ny + y_halo))
 
       ! TODO: I think there is an module to do this for me?
       ! Build the filename for the call to the C c_get_tile(...) function
       call gen_file(lat, lon, fname, x, y)
       write(c_fname, "(A, A)") trim(TOPO_DIR_PATH), trim(fname)
+      !call mpas_f_to_c_string(fname, c_fname)
       c_fname = trim(c_fname)//char(0)
 
-      if( c_get_tile(trim(c_fname), nx, ny, x_halo, y_halo, word_size, tile_s%tile) == -1 ) then
+      tile_ptr = c_loc(tile%tile)
+
+      if( c_get_tile(trim(c_fname), nx, ny, x_halo, y_halo, word_size, tile_ptr) == -1 ) then
+          write(0,*) "We had a problem reading from the geogrid!"
           call mpas_log_write("We had a problem reading the geogrid")
           ! Error
           stop
       endif
 
-      tile_s % fname = fname
-      tile_s % x(1) = x
-      tile_s % x(2) = x + nx - 1
-      tile_s % y(1) = y
-      tile_s % y(2) = y + ny - 1
+      tile % fname = fname
+      tile % x(1) = x
+      tile % x(2) = x + nx - 1
+      tile % y(1) = y
+      tile % y(2) = y + ny - 1
 
-      tile_s % val = ( 18 * ((tile_s%x(1)-1)/nx)) + ((tile_s%y(1)-1)/ny) 
+      tile % val = ( 18 * ((tile%x(1)-1)/nx)) + ((tile%y(1)-1)/ny) 
 
-      !write(0,*) tile_s%val, tile_s%x(1), tile_s%y(1), trim(tile_s%fname)
+      write(0,*) trim(tile % fname), tile % val
+
+      !write(0,*) tile%val, tile%x(1), tile%y(1), trim(tile%fname)
 
       ! Add the new node to front of the list
-      if( .NOT. associated(tiles % next ) ) then
-         tiles % next => tile_s
-         tile_s % prev => null()
+      if( .NOT. associated(tiles % next) ) then
+         tiles % next => tile
+         tile % prev => null()
       else
-          tiles % next % prev => tile_s
-          tile_s % next => tiles % next
-          tiles % next => tile_s 
+          tiles % next % prev => tile
+          tile % next => tiles % next
+          tiles % next => tile 
       endif
-      
-      tile = tile_s % tile
 
    end subroutine add_tile
 
+   !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+   !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+
+
+
+   !***********************************************************************
+   !
+   !  function terrain_core_finalize
+   !
+   !> \brief   MPAS Core Finalization Function
+   !> \author  Doug Jacobsen
+   !> \date    04/06/2015 !> \details 
+   !>  This function finalizes the MPAS core. It should at a minimum destroy the
+   !>  simulation clock, but can perform any functions necessary to clean up the
+   !>  MPAS core.
+   !
+   !-----------------------------------------------------------------------
    subroutine deallocate_tiles()
 
       implicit none

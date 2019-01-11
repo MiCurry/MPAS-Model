@@ -45,7 +45,7 @@ int c_get_tile(char *file,
                int x_offset, 
                int y_offset, 
                int word_size, 
-               float tile[dx + x_offset][dy + y_offset])
+               float* tile)
 {
     int fd;                /* File Descriptor */
     int i, j;
@@ -100,7 +100,7 @@ int c_get_tile(char *file,
     for(j=0; j < dx + x_offset; j++){
         for(i=0; i < dy + y_offset; i++){
             /* Place the values into the fortran interoperable array and return */
-            tile[i][j] = tile_1d[ (dx + x_offset) * j + i ];
+            tile[i * dx + j] = tile_1d[ (dx + x_offset) * j + i ];
         }
     }
 
