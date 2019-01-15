@@ -384,7 +384,7 @@ module terrain_core
 
       ! Local variables
       character (len=StrKIND) :: fname
-      type(tile_t), pointer :: cur
+      type(tile_t), pointer :: cur => null()
       type(tile_t) :: tile_s
       integer :: x, y
       integer :: val
@@ -393,17 +393,25 @@ module terrain_core
 
       val = ( 18 * ((x-1)/nx)) + ((y-1)/ny) 
 
+      if ( val == 11 ) then
+         write(0,*) "We are looking for numero 11"
+      endif 
+
       cur => tiles
+
       search_tile = .FALSE.
       do while(associated(cur%next))
+         cur => cur%next
          if(trim(cur%fname) == trim(fname) .OR. cur%val == val ) then
             tile => cur
             search_tile = .TRUE.
             return
-         else
-            cur => cur%next
          endif
       enddo
+
+      if ( val == 11 ) then
+         write(0,*) "We did not find 11 :'("
+      endif 
 
    end function search_tile
 
@@ -480,7 +488,11 @@ module terrain_core
 
       tile % val = ( 18 * ((tile%x(1)-1)/nx)) + ((tile%y(1)-1)/ny) 
 
-      write(0,*) trim(tile % fname), tile % val
+      if(tile%val == 11) then
+         write(0,*) "We are in add_tile and we are adding 11"
+      endif
+
+      !write(0,*) trim(tile % fname), tile % val
 
       !write(0,*) tile%val, tile%x(1), tile%y(1), trim(tile%fname)
 
@@ -488,6 +500,7 @@ module terrain_core
       if( .NOT. associated(tiles % next) ) then
          tiles % next => tile
          tile % prev => null()
+         tile % next => null()
       else
           tiles % next % prev => tile
           tile % next => tiles % next
