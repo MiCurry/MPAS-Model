@@ -5,45 +5,71 @@
 #include <fcntl.h>
 #include <unistd.h>
 
-/* Opens and reads a binary tile file and returns its contents into a 2x2 
-   array.
+/* Opens and reads a binary tile file and returns its contents into an array.
+
+
+   The interface for the following function is described as:
+
+   use iso_c_binding, only : c_int, c_char, c_float, c_ptr, c_loc
  
-    interface
-        function c_get_tile(file, dx, dy, x_offset, y_offset, word_size, tile) bind(C)
-            use iso_c_binding, only : c_int, c_char, c_float
-            character (c_char), intent(in) :: file
-            integer (c_int), intent(in), value :: dx
-            integer (c_int), intent(in), value :: dy
-            integer (c_int), intent(in), value :: x_offset
-            integer (c_int), intent(in), value :: y_offset
-            integer (c_int), intent(in), value :: word_size
-            real (c_float) :: tile(dx, dy)
-        end function c_get_tile
-    end interface
- 
-    integer (c_int) :: dx, dy, x_offset, y_offset, word_size
-    integer (c_int) :: tile(dx, dy)
+   interface
+      integer (c_int) function c_get_tile(file, nx, ny, x_halo, y_halo, word_size, tile) bind(C)
+         use iso_c_binding, only : c_int, c_char, c_float, c_ptr
+         character (c_char), intent(in) :: file
+         integer (c_int), intent(in), value :: nx
+         integer (c_int), intent(in), value :: ny
+         integer (c_int), intent(in), value :: x_halo
+         integer (c_int), intent(in), value :: y_halo
+         integer (c_int), intent(in), value :: word_size
+         type (c_ptr), value :: tile
+      end function c_get_tile
+   end interface
+
+
+   To pass in the tile argument do the following in fortran:
+
+
+   ! Define the tile with attributes POINTER, and CONTIGUOUS
+   ! and a define a c_ptr.
+
+   real (c_float), dimension(:,:), pointer, contiguous :: tile
+   type (c_ptr) :: tile_ptr
+
+   ! Then set the c_ptr point to our contiguous tile. After tile tile_ptr
+   ! will be 'pointing' to our tile.
+
+   tile_ptr = c_loc(tile)
+
+   ! Then pass it into C:
+
+   iErr = c_get_tile(file, nx, ny, x_halo, y_halo, word_size, tile_ptr)
+
+
+
+   Because we have defined our tile array to be CONTIGUOUS, we can safely pass
+   the c_loc (ie the address) to C and have C loop over its contents via
+   implicit pointer arithmatic!
 
 */
 
 #define GEOG_BIG_ENDIAN 0
 #define GEOG_LITTLE_ENDIAN 1
 
-/* int c_get_tile(char *file, int dx, int dy, int *tile[dx][dy])
+/* int c_get_tile(char *file, int nx, int ny, int *tile[nx][ny])
  *
  * char *file        - The path, realtive or absolute to the file
- * int dx            - The size of the x direction of the tile
- * int dy            - The size of the y direction of the tile
- * int *tile[dx][dy] - The array to hold the tile values on return
+ * int nx            - The size of the x direction of the tile
+ * int ny            - The size of the y direction of the tile
+ * int *tile[nx][ny] - The array to hold the tile values on return
  *
  * returns - 1 if success and -1 if file does not exist
  */
 
 int c_get_tile(char *file, 
-               int dx, 
-               int dy, 
-               int x_offset, 
-               int y_offset, 
+               int nx, 
+               int ny, 
+               int x_halo, 
+               int y_halo, 
                int word_size, 
                float* tile)
 {
@@ -53,7 +79,7 @@ int c_get_tile(char *file,
 	 size_t numBytes = 0;
     int value = 0;
 
-    int narray = (dx + x_offset) * (dy + y_offset); /* Extent of bytes we have to read */
+    int narray = (nx + x_halo) * (ny + y_halo); /* Extent of bytes we have to read */
     float tile_1d[narray];             
 
     /* Allocate enough space for the entire file */
@@ -97,10 +123,10 @@ int c_get_tile(char *file,
         }
     }
 
-    for(j=0; j < dx + x_offset; j++){
-        for(i=0; i < dy + y_offset; i++){
+    for(j=0; j < nx + x_halo; j++){
+        for(i=0; i < ny + y_halo; i++){
             /* Place the values into the fortran interoperable array and return */
-            tile[i * dx + j] = tile_1d[ (dx + x_offset) * j + i ];
+            tile[i * nx + j] = tile_1d[ (nx + x_halo) * j + i ];
         }
     }
 
