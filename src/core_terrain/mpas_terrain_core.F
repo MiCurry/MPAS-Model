@@ -52,6 +52,8 @@ module terrain_core
    integer(KIND=c_int), parameter :: y_halo = 6
    integer(KIND=c_int), parameter :: word_size = 2
 
+   integer :: add_tile_cnt = 0
+
    ! TODO: This is probably defined somewhere else?
    real (KIND=RKIND), parameter :: PI = 4.0 * ATAN(1.0)
 
@@ -206,6 +208,7 @@ module terrain_core
       call mpas_timer_stop("tile allocation") !!! Timing
       call mpas_log_write("About to interpolate terrain data values to mesh...")
 
+      call mpas_timer_start("tile interp")
       ! Process the tiles 
       do x = 0, size(tile_hash, 1) - 1, 1 ! Forwards
          do y = 0, size(tile_hash, 2) - 1, 1 ! Forwards 
@@ -248,10 +251,15 @@ module terrain_core
           enddo
          enddo
       enddo
+      call mpas_timer_stop("tile interp")
 
       do nCell = 1,nCells
+         if(nhs(nCell) == 0) then
+            write(0,*) "We have a divide by zero! nhs(nCell): ", nhs(nCell)
+         endif
          ter(nCell) = ter(nCell) / real(nhs(nCell))
       end do
+
 
       ! Deallocate all the tiles
       do i = 0, size(tile_hash, 1) - 1 , 1
@@ -344,6 +352,8 @@ module terrain_core
       if (search_tile(lat, lon, tile)) then
          ! pass
       else
+         write(0,*) add_tile_cnt
+         add_tile_cnt = add_tile_cnt + 1
          call add_tile(lat, lon, tile)
       endif
 
@@ -428,12 +438,13 @@ module terrain_core
       end interface
 
       ! Input values
-      real (kind=RKIND), value :: lat, lon
-      type (tile_t), pointer :: tile => null()
+      real (kind=RKIND), intent(in), value :: lat, lon
+      type (tile_t), intent(inout), pointer :: tile
 
       ! Local variables
       integer :: x, y
-      character (len=StrKIND, kind=c_char) :: fname
+      character (len=StrKIND) :: fname
+      character (len=StrKIND, kind=c_char) :: c_fname
       type(c_ptr) :: tile_ptr
 
       allocate(tile) ! Allocate the new node 
@@ -441,12 +452,12 @@ module terrain_core
 
       ! Build the filename for the call to the c_get_tile(...) 
       call gen_file(lat, lon, fname, x, y)
-      write(fname, "(A, A)") trim(TOPO_DIR_PATH), trim(fname)
-      call mpas_f_to_c_string(fname, fname)
 
+      write(c_fname, "(A, A)") trim(TOPO_DIR_PATH), trim(fname)
+      c_fname = trim(c_fname)//char(0)
       
       tile_ptr = c_loc(tile%tile) ! Pass in the c_loc of our tile array 
-      if( c_get_tile(fname, nx, ny, x_halo, y_halo, word_size, tile_ptr) == -1 ) then
+      if(c_get_tile(c_fname, nx, ny, x_halo, y_halo, word_size, tile_ptr) == -1) then
           write(0,*) "We had a problem reading from the geogrid!", trim(fname)
           call mpas_log_write("Error reading the geogrid", messageType=MPAS_LOG_ERR)
           stop

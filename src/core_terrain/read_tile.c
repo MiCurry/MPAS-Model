@@ -123,10 +123,10 @@ int c_get_tile(char *file,
         }
     }
 
-    for(j=0; j < nx + x_halo; j++){
-        for(i=0; i < ny + y_halo; i++){
+    for(i=0; i < nx + x_halo; i++){
+        for(j=0; j < ny + y_halo; j++){
             /* Place the values into the fortran interoperable array and return */
-            tile[i * nx + j] = tile_1d[ (nx + x_halo) * j + i ];
+            tile[i * (nx + x_halo) + j] = tile_1d[ j * (nx + x_halo) + i ];
         }
     }
 
