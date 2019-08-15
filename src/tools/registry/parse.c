@@ -19,7 +19,6 @@ int is_unique_field(ezxml_t registry, ezxml_t field, const char *check_name);
 int is_unique_struct(ezxml_t registry, ezxml_t check_struct, const char *check_name);
 int check_for_unique_names(ezxml_t registry, ezxml_t current_position);
 int is_integer_constant(char *);
-int parse_reg_xml(ezxml_t registry);
 int validate_reg_xml(ezxml_t registry);
 
 
@@ -60,8 +59,33 @@ int main(int argc, char ** argv)/*{{{*/
 
 	write_model_variables(registry);
 
-	if (parse_reg_xml(registry)) {
+	// Parse Packages
+	if (parse_packages_from_registry(registry)) {
 		fprintf(stderr, "Parsing failed.....\n");
+		return 1;
+	}
+
+	// Parse namelist records
+	if (parse_namelist_records_from_registry(registry)) {
+		fprintf(stderr, "Parsing namelist failed.....\n");
+		return 1;
+	}
+
+	// Parse dimensions
+	if (parse_dimensions_from_registry(registry)) {
+		fprintf(stderr, "Parsing dimensions failed.....\n");
+		return 1;
+	}
+
+	// Parse variable structures
+	if (parse_structs_from_registry(registry)) {
+		fprintf(stderr, "Parsing variable structures failed.....\n");
+		return 1;
+	}
+
+	// Generate code to read and write fields
+	if (generate_immutable_streams(registry)) {
+		fprintf(stderr, "Parsing read and write fields failed.....%d\n");
 		return 1;
 	}
 
@@ -729,37 +753,6 @@ done_searching:
 
 	return 0;
 }/*}}}*/
-
-
-int parse_reg_xml(ezxml_t registry)/*{{{*/
-{
-	ezxml_t dims_xml, dim_xml;
-	ezxml_t structs_xml, var_arr_xml, var_xml;
-	ezxml_t nmlrecs_xml, nmlopt_xml;
-	ezxml_t packages_xml, package_xml;
-	ezxml_t streams_xml, stream_xml;
-
-	int err;
-
-
-	// Parse Packages
-	err = parse_packages_from_registry(registry);
-
-	// Parse namelist records
-	err = parse_namelist_records_from_registry(registry);
-
-	// Parse dimensions
-	err = parse_dimensions_from_registry(registry);
-
-	// Parse variable structures
-	err = parse_structs_from_registry(registry);
-
-	// Generate code to read and write fields
-	err = generate_immutable_streams(registry);
-
-	return 0;
-}/*}}}*/
-
 
 int is_unique_field(ezxml_t registry, ezxml_t field, const char *check_name){/*{{{*/
 	ezxml_t struct_xml, var_arr_xml, var_xml;
