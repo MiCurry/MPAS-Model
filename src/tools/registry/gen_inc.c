@@ -2558,4 +2558,31 @@ int parse_structs_from_registry(ezxml_t registry)/*{{{*/
 	return 0;
 }/*}}}*/
 
+int generate_cpf_meta(ezxml_t registry)/*{{{*/
+{
+	FILE *fd;
+	int err;
+
+	fprintf(stderr, "Generating MPAS-A CPF pointers.....\n");
+
+	fd = fopen("moudle.meta", "w+");
+	fortprintf(fd, "! module.meta \n");
+	fclose(fd);
+
+	return 0;
+}/*}}}*/
+
+int generate_cpf_pointers(ezxml_t registry)/*{{{*/
+{
+	FILE *fd;
+	int err;
+
+	fprintf(stderr, "Generating MPAS-A CPF pointers.....\n");
+
+	fd = fopen("cpf_pointers.inc", "w+");
+	fortprintf(fd, "! cpf_pointers.inc \n");
+	fclose(fd);
+
+	return 0;
+}/*}}}*/
 

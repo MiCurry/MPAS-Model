@@ -38,3 +38,5 @@ int push_attributes(ezxml_t currentPosition);
 int merge_structs_and_var_arrays(ezxml_t currentPosition);
 int merge_streams(ezxml_t registry);
 int parse_structs_from_registry(ezxml_t registry);
+int generate_cpf_meta(ezxml_t registry);
+int generate_cpf_pointers(ezxml_t registry);

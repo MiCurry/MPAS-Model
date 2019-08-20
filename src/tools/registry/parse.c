@@ -38,7 +38,9 @@ int main(int argc, char ** argv)/*{{{*/
 
 	for (i = 1; i < argc; i++) {
 		if (strncmp(argv[i], "--", 2) == 0) { // We have an option
-			// Handle option at argv[i] here
+			if (strcmp(argv[i], "--cpf-module") == 0) {
+				gen_atm_cpf = 1;
+			}
 		} else if (!(regfile = fopen(argv[i], "r"))) {
 	        fprintf(stderr,"\nError: Could not open file %s for reading.\n\n", argv[i]);
 			return 1;
@@ -97,6 +99,18 @@ int main(int argc, char ** argv)/*{{{*/
 		return 1;
 	}
 
+    // Generate MPAS-A 
+    if (gen_atm_cpf) {
+        if (generate_cpf_pointers(registry)) {
+            fprintf(stderr, "Generating MPAS-A CPF pointers failed...\n");
+            return 1;
+        }
+        
+        if (generate_cpf_meta(registry)) {
+            fprintf(stderr, "Generating MPAS-A CPF meta module failed...\n");
+            return 1;
+        }
+    }
 	return 0;
 }/*}}}*/
 
