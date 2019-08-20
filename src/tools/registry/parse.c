@@ -30,16 +30,24 @@ int main(int argc, char ** argv)/*{{{*/
 	struct variable * vars;
 	struct group_list * groups;
 	struct package * pkgs;
+	int gen_atm_cpf = 0;
+	int i;
 	int err;
 
-	if (argc != 2) {
-		fprintf(stderr,"Reading registry file from standard input\n");
-		regfile = stdin;
+	regfile = stdin;
+
+	for (i = 1; i < argc; i++) {
+		if (strncmp(argv[i], "--", 2) == 0) { // We have an option
+			// Handle option at argv[i] here
+		} else if (!(regfile = fopen(argv[i], "r"))) {
+	        fprintf(stderr,"\nError: Could not open file %s for reading.\n\n", argv[i]);
+			return 1;
+		}
 	}
-	else if (!(regfile = fopen(argv[1], "r"))) {
-		fprintf(stderr,"\nError: Could not open file %s for reading.\n\n", argv[1]);
-		return 1;
-	}   
+
+	if (regfile == stdin) {
+		fprintf(stderr,"Reading registry file from standard input\n");
+	}
 
 	nls = NULL;
 	dims = NULL;
