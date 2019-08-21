@@ -43,7 +43,8 @@ OBJS = \
 	mpas_atmphys_todynamics.o          \
 	mpas_atmphys_update_surface.o      \
 	mpas_atmphys_update.o              \
-	mpas_atmphys_vars.o
+	mpas_atmphys_vars.o                \
+	mpas_cpf_pointers.o
 
 lookup_tables:
 	./checkout_data_files.sh
@@ -190,6 +191,8 @@ mpas_atmphys_update_surface.o: \
 mpas_atmphys_update.o: \
 	mpas_atmphys_driver_convection.o \
 	mpas_atmphys_vars.o
+
+mpas_cpf_pointers.o: \
 
 clean:
 	$(RM) *.o *.mod *.f90 libphys.a

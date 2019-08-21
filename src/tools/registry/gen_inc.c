@@ -2558,31 +2558,258 @@ int parse_structs_from_registry(ezxml_t registry)/*{{{*/
 	return 0;
 }/*}}}*/
 
+
 int generate_cpf_meta(ezxml_t registry)/*{{{*/
 {
-	FILE *fd;
-	int err;
+    ezxml_t varStruct_xml, var_xml, varArray_xml;
+    const char *varStructName, *varName;
+    const char *varType, *varDims, *varUnits, *varDesc, *varPackage;
+	const char *varArrayName, *varArrayType, *varArrayDims;
+	const char *cpfStdName;
+	char *long_name;
+	char **dims;
+	char *dimptr;
+	char *token;
 
-	fprintf(stderr, "Generating MPAS-A CPF pointers.....\n");
+    int nDims;
+    int i, j;
 
-	fd = fopen("moudle.meta", "w+");
-	fortprintf(fd, "! module.meta \n");
+    FILE *fd;
+    int err;
+
+	int has_time, decomp;
+
+	fprintf(stderr, "Generating MPAS-A CPF meta module.....\n");
+	fd = fopen("module.meta", "w+");
+	
+	fprintf(fd, "[ccpp-arg-table]\n");
+	fprintf(fd, "  name = access_method\n");
+	fprintf(fd, "  type = module\n");
+	
+	// Parse var_structs
+	for (varStruct_xml = ezxml_child(registry, "var_struct"); varStruct_xml; varStruct_xml = varStruct_xml->next){
+		
+		// Parse vars
+		for (var_xml = ezxml_child(varStruct_xml, "var"); var_xml; var_xml = var_xml->next){
+			// Only generate code for shared SIMA CPF variables
+			cpfStdName = ezxml_attr(var_xml, "cpf_std_name");
+			if (cpfStdName == NULL) {
+				continue;
+			}
+
+            varName = ezxml_attr(var_xml, "name");
+            varType = ezxml_attr(var_xml, "type");
+            varDims = ezxml_attr(var_xml, "dimensions");
+			varUnits = ezxml_attr(var_xml, "units");
+
+			build_dimension_information(registry, var_xml, &nDims, &has_time, &decomp);	
+
+			dimptr = strdup(varDims);
+			dims = malloc(nDims * sizeof(char*));
+
+			fprintf(fd, "[%s]\n", varName);
+			fprintf(fd, "  standard_name = %s\n", cpfStdName);
+			// Make long_name by removing underscores from cpfStdName
+			long_name = strdup(cpfStdName);
+			for (i = 0; i < strlen(long_name); i++) {
+				if (long_name[i] == '_') { // Replace _ with spaces
+					long_name[i] = ' ';
+				}
+			}
+			fprintf(fd, "  long_name = %s\n", long_name);
+			free(long_name);
+			fprintf(fd, "  dimensions = (");
+
+            for (i = 0; i < nDims; i++) {
+				/* grab each dim from varDims using spec */
+				token = strsep(&dimptr, " ");
+				if (token == NULL) {
+					break;
+				} else if (token[0] == '\0') {
+					continue;
+				} else if (strcmp(token, "time") == 0) {
+					continue; // Don't print out time dimension
+				} else {
+					// Build up a list of tokens so they can be reversed
+					dims[i] = malloc(strlen(token) * sizeof(char));
+					dims[i] = token;
+				}
+            }
+
+			// Print out dimensions in reverse order
+			for (i = nDims - 1; i > -1; i--){
+				fprintf(fd, "%s", dims[i]);
+				if (i != 0 && nDims != 1){
+					fprintf(fd, "," );
+				}
+			}
+
+			for (i = 0; i < nDims; i++) {
+				free(dims[i]);
+			}
+			free(dims);
+
+			fprintf(fd, ")\n");
+			fprintf(fd, "  units = %s\n", varUnits);
+			fprintf(fd, "  kind = %s\n", varType);
+            if (strcmp(varType, "real") == 0){
+				// Not sure what to do with real types for module.meta
+            }
+
+		}
+
+		// Parse VarArrays
+        for (varArray_xml = ezxml_child(varStruct_xml, "var_array"); varArray_xml; varArray_xml = varArray_xml->next){
+			// Only generate code for shared SIMA CPF variables
+			cpfStdName = ezxml_attr(var_xml, "cpf_std_name");
+			if (cpfStdName == NULL) {
+				continue;
+			}
+            varArrayName = ezxml_attr(varArray_xml, "name");
+			varArrayType = ezxml_attr(varArray_xml, "type");
+			varArrayDims = ezxml_attr(varArray_xml, "dimensions");
+
+			build_dimension_information(registry, varArray_xml, &nDims, &has_time, &decomp);	
+
+            for (var_xml = ezxml_child(varArray_xml, "var"); var_xml; var_xml = var_xml->next){
+                varName = ezxml_attr(var_xml, "name");
+
+				fprintf(fd, "[%s]\n", varName);
+				fprintf(fd, "  standard_name = %s\n", cpfStdName);
+				// Make long_name by removing underscores from cpfStdName
+				long_name = strdup(cpfStdName);
+				for (i = 0; i < strlen(long_name); i++) {
+					if (long_name[i] == '_') { // Replace _ with spaces
+						long_name[i] = ' ';
+					}
+				}
+				fprintf(fd, "  long_name = %s\n", long_name);
+				free(long_name);
+				fprintf(fd, "  dimensions = (");
+
+				dimptr = strdup(varArrayDims);
+
+				for (i = 0; i < nDims; i++) {
+					/* grab each dim from varDims using spec */
+					token = strsep(&dimptr, " ");
+					if (token == NULL) {
+						break;
+					} else if (token[0] == '\0') {
+						continue;
+					} else if (strcmp(token, "time") == 0) {
+						continue; // Don't print out time dim
+					}
+					else {
+						fprintf(fd, "%s", token);
+						if (i != nDims - 1){
+							fprintf(fd, "," );
+						}
+					}
+				}
+
+				fprintf(fd, ")\n");
+				fprintf(fd, "  units = %s\n", varUnits);
+				fprintf(fd, "  kind = %s\n", varArrayType);
+				if (strcmp(varType, "real") == 0){
+
+				}
+            }
+        }
+    }
 	fclose(fd);
 
 	return 0;
 }/*}}}*/
 
-int generate_cpf_pointers(ezxml_t registry)/*{{{*/
-{
-	FILE *fd;
-	int err;
 
-	fprintf(stderr, "Generating MPAS-A CPF pointers.....\n");
+int generate_cpf_pointers(ezxml_t registry){/*{{{*/
 
-	fd = fopen("cpf_pointers.inc", "w+");
-	fortprintf(fd, "! cpf_pointers.inc \n");
-	fclose(fd);
+    ezxml_t varStruct_xml, var_xml, varArray_xml;
+    const char *varStructName, *varName, *varArrayName;
+    const char *varType, *varDims, *varUnits, *varDesc, *varPackage;
+	const char *lastDim;
+	char *dimptr;
+	char *token;
 
-	return 0;
+    int nDims;
+    int i;
+
+    FILE *fd;
+    int err;
+
+	int has_time, decomp;
+
+    fd = fopen("cpf_pointers.inc", "w+");
+
+	// Parse var_structs
+	for (varStruct_xml = ezxml_child(registry, "var_struct"); varStruct_xml; varStruct_xml = varStruct_xml->next){
+
+        varStructName = ezxml_attr(varStruct_xml, "name");
+        fortprintf(fd, "! varStructName: %s\n", varStructName);
+
+		for (var_xml = ezxml_child(varStruct_xml, "var"); var_xml; var_xml = var_xml->next){
+            varName = ezxml_attr(var_xml, "name");
+            varType = ezxml_attr(var_xml, "type");
+            varDims = ezxml_attr(var_xml, "dimensions");
+
+			build_dimension_information(registry, var_xml, &nDims, &has_time, &decomp);	
+
+			if (nDims <= 1) { // We don't want single dimensions variables
+				continue;
+			}
+
+			dimptr = strdup(varDims);
+
+			// We only want variables with both nVertLevels and nCells as
+			// dimensions
+			token = strsep(&dimptr, " ");
+			if (strncmp(token, "nVertLevels", sizeof("nVertLevels")) != 0) {
+				continue;
+			}
+			token = strsep(&dimptr, " ");
+			if (strncmp(token, "nCells", sizeof("nCells")) != 0) {
+				continue;					
+			} 
+
+			fortprintf(fd, "! "); // Comment
+
+            if (strcmp(varType, "real") == 0) {
+                fortprintf(fd, "real (kind_phys),");
+            } else if (strcmp(varType, "text") == 0) {
+				fortprintf(fd, "%s", "character(len=StrKIND),");
+			} else {
+				fortprintf(fd, "%s,", varType);
+			}
+
+
+			fortprintf(fd, " dimension("); 
+			for (i = 0; i < nDims; i++) {
+				/* grab each dim from varDims using spec */
+				fortprintf(fd, ":");
+				if (i != nDims - 1){ // Don't print a comma at the last dim
+					fortprintf(fd, "," );
+				}
+			}
+			fortprintf(fd, "),"); 
+
+
+            fortprintf(fd, " pointer");
+            fortprintf(fd, " ::");
+            fortprintf(fd, " %s\n", varName);
+
+		}
+
+		// Parse VarArrays
+        for (varArray_xml = ezxml_child(varStruct_xml, "var_array"); varArray_xml; varArray_xml = varArray_xml->next){
+            varArrayName = ezxml_attr(varArray_xml, "name");
+            //fortprintf(fd, "! \t varArray: %s\n", varArrayName);
+
+            for (var_xml = ezxml_child(varArray_xml, "var"); var_xml; var_xml = var_xml->next){
+                varName = ezxml_attr(var_xml, "name");
+                //fortprintf(fd, "\t\t%s\n", varName);
+            }
+        }
+    }
+
+    return 0;
 }/*}}}*/
-

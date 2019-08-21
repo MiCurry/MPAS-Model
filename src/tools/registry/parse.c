@@ -99,18 +99,19 @@ int main(int argc, char ** argv)/*{{{*/
 		return 1;
 	}
 
-    // Generate MPAS-A 
-    if (gen_atm_cpf) {
-        if (generate_cpf_pointers(registry)) {
-            fprintf(stderr, "Generating MPAS-A CPF pointers failed...\n");
-            return 1;
-        }
-        
-        if (generate_cpf_meta(registry)) {
-            fprintf(stderr, "Generating MPAS-A CPF meta module failed...\n");
-            return 1;
-        }
-    }
+	// MPAS-A Code to Generate CPF Pointers
+	if (gen_atm_cpf) {
+		if (generate_cpf_pointers(registry)) {
+			fprintf(stderr, "Generating MPAS-A CPF pointers failed.....\n");
+			return 1;
+		}
+
+		if (generate_cpf_meta(registry)) {
+			fprintf(stderr, "Generating MPAS-A CPF meta module failed.....\n");
+			return 1;
+		}
+	}
+
 	return 0;
 }/*}}}*/
 
@@ -775,6 +776,7 @@ done_searching:
 
 	return 0;
 }/*}}}*/
+
 
 int is_unique_field(ezxml_t registry, ezxml_t field, const char *check_name){/*{{{*/
 	ezxml_t struct_xml, var_arr_xml, var_xml;
