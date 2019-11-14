@@ -3,9 +3,12 @@ program hello
     use netcdf
     use pnetcdf
     use mpi
+    use pio
+    use pio_types
 
     integer :: ierr, ncid, dimid
     integer (kind=MPI_OFFSET_KIND) :: timeL = 1
+    type (iosystem_desc_t) :: io_system
 #ifdef CORE_ATMOSPHERE
     write(0,*) 'This is MPAS-Atmosphere'
 #endif
@@ -25,6 +28,9 @@ program hello
     ierr = nf90mpi_def_dim(ncid, "Time", timeL, dimid)
     ierr = nf90mpi_enddef(ncid)
     ierr = nf90mpi_close(ncid)
+
+    ! PIO
+    call PIO_init(0, MPI_COMM_WORLD, 1, 0, 1, PIO_rearr_box, io_system)
 
     call MPI_Finalize(ierr)
 
