@@ -1,11 +1,11 @@
 .SUFFIXES: .F .o
 
-OBJS = mpas_dummy_core.o \
-       mpas_dummy_core_interface.o
+OBJS = mpas_reconstruct_u_core.o \
+       mpas_reconstruct_u_core_interface.o
 
-all: core_dummy
+all: core_reconstruct_u
 
-core_dummy: $(OBJS)
+core_reconstruct_u: $(OBJS)
 	ar -ru libdycore.a $(OBJS)
 
 core_reg:
@@ -13,8 +13,8 @@ core_reg:
 
 core_input_gen:
 	if [ ! -e default_inputs ]; then  mkdir default_inputs; fi
-	(cd default_inputs; $(NL_GEN) ../Registry_processed.xml namelist.dummy )
-	(cd default_inputs; $(ST_GEN) ../Registry_processed.xml streams.dummy stream_list.dummy. listed )
+	(cd default_inputs; $(NL_GEN) ../Registry_processed.xml namelist.reconstruct_u )
+	(cd default_inputs; $(ST_GEN) ../Registry_processed.xml streams.reconstruct_u stream_list.reconstruct_u. listed )
 
 gen_includes:
 	$(CPP) $(CPPFLAGS) $(CPPINCLUDES) Registry.xml > Registry_processed.xml
@@ -26,9 +26,9 @@ post_build:
 	cp default_inputs/* $(ROOT_DIR)/default_inputs/.
 	( cd $(ROOT_DIR)/default_inputs; for FILE in `ls -1`; do if [ ! -e ../$$FILE ]; then cp $$FILE ../.; fi; done )
 
-mpas_dummy_core_interface.o: mpas_dummy_core.o
+mpas_reconstruct_u_core_interface.o: mpas_reconstruct_u_core.o
 
-mpas_dummy_core.o:
+mpas_reconstruct_u_core.o:
 
 clean:
 	$(RM) *.o *.mod *.f90 libdycore.a

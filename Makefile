@@ -1,7 +1,7 @@
 MODEL_FORMULATION = 
 
 
-dummy:
+reconstcut_u:
 	( $(MAKE) error )
 
 xlf:

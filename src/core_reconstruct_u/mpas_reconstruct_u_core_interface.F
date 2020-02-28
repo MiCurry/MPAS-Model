@@ -5,7 +5,7 @@
 ! Additional copyright and license information can be found in the LICENSE file
 ! distributed with this code, or at http://mpas-dev.github.com/license.html
 !
-module dummy_core_interface
+module reconstruct_u_core_interface
 
    use mpas_derived_types
    use mpas_pool_routines
@@ -13,7 +13,7 @@ module dummy_core_interface
    use mpas_constants
    use mpas_log
    use mpas_attlist
-   use dummy_core
+   use reconstruct_u_core
 
    public
 
@@ -23,66 +23,66 @@ module dummy_core_interface
 
    !***********************************************************************
    !
-   !  routine dummy_setup_core
+   !  routine reconstruct_u_setup_core
    !
    !> \brief   Test core setup routine
    !> \author  Doug Jacobsen
    !> \date    03/18/2015
    !> \details 
    !>  This routine is intended to setup the necessary variables within a core_type
-   !>  for the dummy core.
+   !>  for the reconstruct_u core.
    !
    !-----------------------------------------------------------------------
-   subroutine dummy_setup_core(core)
+   subroutine reconstruct_u_setup_core(core)
 
       type (core_type), pointer :: core
 
-      core % core_init => dummy_core_init
-      core % core_run => dummy_core_run
-      core % core_finalize => dummy_core_finalize
-      core % define_packages => dummy_define_packages
-      core % setup_packages => dummy_setup_packages
-      core % setup_decompositions => dummy_setup_decompositions
-      core % setup_clock => dummy_setup_clock
-      core % setup_log => dummy_setup_log
-      core % get_mesh_stream => dummy_get_mesh_stream
-      core % setup_immutable_streams => dummy_setup_immutable_streams
-      core % setup_derived_dimensions => dummy_setup_derived_dimensions
-      core % setup_decomposed_dimensions => dummy_setup_decomposed_dimensions
-      core % setup_block => dummy_setup_block
-      core % setup_namelist => dummy_setup_namelists
+      core % core_init => reconstruct_u_core_init
+      core % core_run => reconstruct_u_core_run
+      core % core_finalize => reconstruct_u_core_finalize
+      core % define_packages => reconstruct_u_define_packages
+      core % setup_packages => reconstruct_u_setup_packages
+      core % setup_decompositions => reconstruct_u_setup_decompositions
+      core % setup_clock => reconstruct_u_setup_clock
+      core % setup_log => reconstruct_u_setup_log
+      core % get_mesh_stream => reconstruct_u_get_mesh_stream
+      core % setup_immutable_streams => reconstruct_u_setup_immutable_streams
+      core % setup_derived_dimensions => reconstruct_u_setup_derived_dimensions
+      core % setup_decomposed_dimensions => reconstruct_u_setup_decomposed_dimensions
+      core % setup_block => reconstruct_u_setup_block
+      core % setup_namelist => reconstruct_u_setup_namelists
 
       core % Conventions = 'MPAS'
       core % source = 'MPAS'
 #include "inc/core_variables.inc"
 
-   end subroutine dummy_setup_core
+   end subroutine reconstruct_u_setup_core
 
 
    !***********************************************************************
    !
-   !  routine dummy_setup_domain
+   !  routine reconstruct_u_setup_domain
    !
    !> \brief   Test domain setup routine
    !> \author  Doug Jacobsen
    !> \date    03/18/2015
    !> \details 
    !>  This routine is intended to setup the necessary variables within a domain_type
-   !>  for the dummy core.
+   !>  for the reconstruct_u core.
    !
    !-----------------------------------------------------------------------
-   subroutine dummy_setup_domain(domain)
+   subroutine reconstruct_u_setup_domain(domain)
 
       type (domain_type), pointer :: domain
 
 #include "inc/domain_variables.inc"
 
-   end subroutine dummy_setup_domain
+   end subroutine reconstruct_u_setup_domain
 
 
    !***********************************************************************
    !
-   !  function dummy_setup_packages
+   !  function reconstruct_u_setup_packages
    !
    !> \brief   Pacakge setup routine
    !> \author  Doug Jacobsen
@@ -94,7 +94,7 @@ module dummy_core_interface
    !>   *not* allocated until after this routine is called.
    !
    !-----------------------------------------------------------------------
-   function dummy_setup_packages(configPool, packagePool, iocontext) result(ierr)
+   function reconstruct_u_setup_packages(configPool, packagePool, iocontext) result(ierr)
 
       use mpas_derived_types
 
@@ -107,12 +107,12 @@ module dummy_core_interface
 
       ierr = 0
 
-   end function dummy_setup_packages
+   end function reconstruct_u_setup_packages
 
 
    !***********************************************************************
    !
-   !  routine dummy_setup_decompositions
+   !  routine reconstruct_u_setup_decompositions
    !
    !> \brief   Decomposition setup routine
    !> \author  Doug Jacobsen
@@ -122,7 +122,7 @@ module dummy_core_interface
    !>  domain type, and register any decompositons the core wants within it.
    !
    !-----------------------------------------------------------------------
-   function dummy_setup_decompositions(decompList) result(ierr)
+   function reconstruct_u_setup_decompositions(decompList) result(ierr)
 
       use mpas_derived_types
       use mpas_decomp
@@ -146,12 +146,12 @@ module dummy_core_interface
          ierr = 0
       end if
 
-   end function dummy_setup_decompositions
+   end function reconstruct_u_setup_decompositions
 
 
    !***********************************************************************
    !
-   !  function dummy_setup_clock
+   !  function reconstruct_u_setup_clock
    !
    !> \brief   Clock setup routine
    !> \author  Michael Duda
@@ -166,7 +166,7 @@ module dummy_core_interface
    !>  options are available.
    !
    !-----------------------------------------------------------------------
-   function dummy_setup_clock(core_clock, configs) result(ierr)
+   function reconstruct_u_setup_clock(core_clock, configs) result(ierr)
 
       use mpas_derived_types
       use mpas_io_units
@@ -212,12 +212,12 @@ module dummy_core_interface
       end if
 
 
-   end function dummy_setup_clock
+   end function reconstruct_u_setup_clock
 
 
    !***********************************************************************
    !
-   !  function dummy_setup_log
+   !  function reconstruct_u_setup_log
    !
    !> \brief   Log setup routine
    !> \author  Matt Hoffman
@@ -227,7 +227,7 @@ module dummy_core_interface
    !>  and allow the core to specify details of the configuration.
    !
    !-----------------------------------------------------------------------
-   function dummy_setup_log(logInfo, domain) result(iErr)
+   function reconstruct_u_setup_log(logInfo, domain) result(iErr)
 
       use mpas_derived_types
       use mpas_log
@@ -255,12 +255,12 @@ module dummy_core_interface
       call mpas_log_open(err=local_err)
       iErr = ior(iErr, local_err)
 
-   end function dummy_setup_log
+   end function reconstruct_u_setup_log
 
 
    !***********************************************************************
    !
-   !  function dummy_get_mesh_stream
+   !  function reconstruct_u_get_mesh_stream
    !
    !> \brief   Returns the name of the stream containing mesh information
    !> \author  Michael Duda
@@ -272,7 +272,7 @@ module dummy_core_interface
    !>  are available.
    !
    !-----------------------------------------------------------------------
-   function dummy_get_mesh_stream(configs, stream) result(ierr)
+   function reconstruct_u_get_mesh_stream(configs, stream) result(ierr)
 
       use mpas_derived_types
       use mpas_pool_routines
@@ -287,22 +287,22 @@ module dummy_core_interface
 
       write(stream,'(a)') 'input'
 
-   end function dummy_get_mesh_stream
+   end function reconstruct_u_get_mesh_stream
 
 
    !***********************************************************************
    !
-   !  function dummy_setup_block
+   !  function reconstruct_u_setup_block
    !
    !> \brief   Test block setup function
    !> \author  Doug Jacobsen
    !> \date    03/18/2015
    !> \details 
    !>  This function is a wrapper function to properly setup a block to be a
-   !>  dummy core block.
+   !>  reconstruct_u core block.
    !
    !-----------------------------------------------------------------------
-   function dummy_setup_block(block) result(iErr)
+   function reconstruct_u_setup_block(block) result(iErr)
 
       use mpas_derived_types
 
@@ -311,9 +311,9 @@ module dummy_core_interface
 
       iErr = 0
 
-      call dummy_generate_structs(block, block % structs, block % dimensions, block % packages)
+      call reconstruct_u_generate_structs(block, block % structs, block % dimensions, block % packages)
 
-   end function dummy_setup_block
+   end function reconstruct_u_setup_block
 
 #include "inc/setup_immutable_streams.inc"
 
@@ -327,5 +327,5 @@ module dummy_core_interface
 
 #include "inc/namelist_defines.inc"
 
-end module dummy_core_interface
+end module reconstruct_u_core_interface
 

@@ -1,5 +1,5 @@
 <?xml version="1.0"?>
-<registry model="mpas" core="dummy" core_abbrev="dummy" version="7.0">
+<registry model="mpas" core="reconstruct_u" core_abbrev="reconstruct_u" version="7.0">
 	<dims>
 		<dim name="nCells"/>
 		<dim name="nEdges"/>
@@ -115,5 +115,7 @@
 		<var name="edgesOnVertex"                     type="integer"  dimensions="vertexDegree nVertices"/>
 		<var name="cellsOnVertex"                     type="integer"  dimensions="vertexDegree nVertices"/>
 		<var name="kiteAreasOnVertex"                 type="real"     dimensions="vertexDegree nVertices"/>
+		<var name="north"                             type="real"     dimensions="vertexDegree nCells"/>
+		<var name="east"                              type="real"     dimensions="vertexDegree nCells"/>
 	</var_struct>
 </registry>

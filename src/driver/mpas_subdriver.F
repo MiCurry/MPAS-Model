@@ -34,8 +34,8 @@ module mpas_subdriver
 #ifdef CORE_TEST
    use test_core_interface
 #endif
-#ifdef CORE_DUMMY
-   use dummy_core_interface
+#ifdef CORE_RECONSTRUCT_U
+   use reconstruct_u_core_interface
 #endif
 
    type (core_type), pointer :: corelist => null()
@@ -188,9 +188,9 @@ module mpas_subdriver
       call test_setup_core(corelist)
       call test_setup_domain(domain_ptr)
 #endif
-#ifdef CORE_DUMMY
-      call dummy_setup_core(corelist)
-      call dummy_setup_domain(domain_ptr)
+#ifdef CORE_RECONSTRUCT_U
+      call reconstruct_u_setup_core(corelist)
+      call reconstruct_u_setup_domain(domain_ptr)
 #endif
 
       ! Set up the log manager as early as possible so we can use it for any errors/messages during subsequent init steps
