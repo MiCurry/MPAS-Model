@@ -285,7 +285,7 @@ module reconstruct_u_core_interface
 
       ierr = 0
 
-      write(stream,'(a)') 'input'
+      write(stream,'(a)') 'mesh'
 
    end function reconstruct_u_get_mesh_stream
 

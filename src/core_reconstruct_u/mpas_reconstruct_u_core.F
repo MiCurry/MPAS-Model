@@ -221,25 +221,19 @@ module reconstruct_u_core
       call mpas_pool_get_subpool(domain % blocklist % structs, 'mesh', meshPool)
       call mpas_pool_get_dimension(meshPool, 'nCells', nCells)
 
-      call mpas_pool_get_array(meshPool, 'east', east)
-      call mpas_pool_get_array(meshPool, 'north', north)
-
       iErr = 0
 
-      call cam_mpas_compute_unit_vectors(domain)
+      do while (.not. mpas_is_clock_stop_time(clock))
+         currTime = mpas_get_clock_time(clock, MPAS_NOW, ierr)
+         call mpas_get_time(curr_time=currTime, dateTimeString=timeStamp, ierr=ierr)
 
+         call mpas_log_write('Current time = '//trim(timeStamp))
 
-!      do while (.not. mpas_is_clock_stop_time(clock))
-!         currTime = mpas_get_clock_time(clock, MPAS_NOW, ierr)
-!         call mpas_get_time(curr_time=currTime, dateTimeString=timeStamp, ierr=ierr)         
-!
-!         call mpas_log_write('Current time = '//trim(timeStamp))
-!
-!         call mpas_advance_clock(clock)
-!      end do
+         call mpas_advance_clock(clock)
+      end do
 
       currTime = mpas_get_clock_time(clock, MPAS_NOW, ierr)
-      call mpas_get_time(curr_time=currTime, dateTimeString=timeStamp, ierr=ierr)         
+      call mpas_get_time(curr_time=currTime, dateTimeString=timeStamp, ierr=ierr)
       call mpas_log_write('Final time = '//trim(timeStamp))
 
       call mpas_stream_mgr_write(domain % streamManager, forceWriteNow=.true.)

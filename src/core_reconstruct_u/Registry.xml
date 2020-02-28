@@ -8,6 +8,9 @@
 		<dim name="maxEdges2"/>
 		<dim name="vertexDegree"/>
 		<dim name="TWO" definition="2"/>
+      <dim name="nVertLevels"/>
+      <dim name="nVertLevelsP1" definition="nVertLevels+1"/>
+      <dim name="nMonths" definition="12"/>
 	</dims>
 	<nml_record name="time_management" in_defaults="true">
 		<nml_option name="config_calendar_type"              type="character"     default_value="gregorian_noleap"/>
@@ -28,10 +31,9 @@
 		<nml_option name="config_proc_decomp_file_prefix"    type="character"     default_value="graph.info.part."/>
 	</nml_record>
 	<streams>
-		<stream name="input" 
+		<stream name="mesh" 
 				type="input"
 				filename_template="grid.nc"
-				filename_interval="none"
 				input_interval="initial_only"
 				immutable="true">
 
@@ -72,7 +74,39 @@
 			<var name="cellsOnVertex"/>
 			<var name="kiteAreasOnVertex"/>
 		</stream>
+
+		<stream name="input" 
+				type="input"
+				filename_template="diag.$Y-$M-$D_$h.$m.$s.nc"
+				filename_interval="input_interval"
+				input_interval="03:00:00"
+            runtime_format="separate_file">
+
+            <var name="uReconstructZonal"/> 
+            <var name="uReconstructMeridional"/> 
+            <var name="w"/>
+            <var name="rho"/>
+            <var name="theta"/>
+            <var_array name="scalars"/>
+      </stream>
+
+		<stream name="lbc_output" 
+				type="output"
+				filename_template="out.$Y-$M-$D_$h.$m.$s.nc"
+				filename_interval="output_interval"
+				output_interval="03:00:00"
+            runtime_format="separate_file">
+
+            <var name="xtime"/>
+            <var name="lbc_u"/>
+            <var name="lbc_w"/>
+            <var name="lbc_rho"/>
+            <var name="lbc_theta"/>
+            <var_array name="lbc_scalars"/>
+      </stream>
 	</streams>
+
+   ! Var Structs            
 	<var_struct name="model" time_levs="1">
 		<var name="xtime"                             type="text"     dimensions="Time"/>
 	</var_struct>
@@ -115,7 +149,81 @@
 		<var name="edgesOnVertex"                     type="integer"  dimensions="vertexDegree nVertices"/>
 		<var name="cellsOnVertex"                     type="integer"  dimensions="vertexDegree nVertices"/>
 		<var name="kiteAreasOnVertex"                 type="real"     dimensions="vertexDegree nVertices"/>
-		<var name="north"                             type="real"     dimensions="vertexDegree nCells"/>
-		<var name="east"                              type="real"     dimensions="vertexDegree nCells"/>
 	</var_struct>
+
+   <var_struct name="state" time_levs="1">
+      <var name="uReconstructZonal" type="real" dimensions="nVertLevels nCells Time" units="m s^{-1}"
+           description="Zonal component of reconstructed horizontal velocity at cell centers"/>
+
+      <var name="uReconstructMeridional" type="real" dimensions="nVertLevels nCells Time" units="m s^{-1}"
+           description="Meridional component of reconstructed horizontal velocity at cell centers"/>
+
+      <var name="theta" type="real" dimensions="nVertLevels nCells Time" units="K"
+           description="Potential temperature"/>
+
+      <var name="rho" type="real" dimensions="nVertLevels nCells Time" units="kg m^{-3}"
+           description="Dry air density"/>
+
+      <var name="w" type="real" dimensions="nVertLevelsP1 nCells Time" units="m s^{-1}"
+           description="Vertical velocity at vertical cell faces"/>
+
+      <var_array name="scalars" type="real" dimensions="nVertLevels nCells Time">
+           <var name="qv" array_group="moist" units="kg kg^{-1}"
+                description="Water vapor mixing ratio"/>
+
+           <var name="qc" array_group="moist" units="kg kg^{-1}"
+                description="Cloud water mixing ratio"/>
+
+           <var name="qr" array_group="moist" units="kg kg^{-1}"
+                description="Rain water mixing ratio"/>
+
+           <var name="qi" array_group="moist" units="kg kg^{-1}"
+                description="Ice mixing ratio"/>
+
+           <var name="qs" array_group="moist" units="kg kg^{-1}"
+                description="Snow mixing ratio"/>
+
+           <var name="qg" array_group="moist" units="kg kg^{-1}"
+                description="Graupel mixing ratio"/>
+      </var_array>
+      
+   </var_struct>
+
+    <var_struct name="lbc_state" time_levs="1">
+       <var name="lbc_u" type="real" dimensions="nVertLevels nEdges Time"
+            units="m s^{-1}"
+            description="Horizontal normal velocity on domain lateral boundary edges"/>
+
+       <var name="lbc_w" type="real" dimensions="nVertLevelsP1 nCells Time"
+            units="m s^{-1}"
+            description="Vertical velocity on domain lateral boundary vertical cell faces"/>
+
+       <var name="lbc_rho" type="real" dimensions="nVertLevels nCells Time"
+            units="kg m^{-3}"
+            description="Dry air density on lateral boundary cells"/>
+
+       <var name="lbc_theta" type="real" dimensions="nVertLevels nCells Time"
+            units="K"
+            description="Potential temperature on lateral boundary cells"/>
+
+       <var_array name="lbc_scalars" type="real" dimensions="nVertLevels nCells Time">
+         <var name="lbc_qv" name_in_code="qv" array_group="moist" units="kg kg^{-1} s^{-1}"
+              description="Lateral boundary tendency of water vapor mixing ratio"/>
+
+         <var name="lbc_qc" name_in_code="qc" array_group="moist" units="kg kg^{-1} s^{-1}"
+              description="Lateral boundary tendency of cloud water mixing ratio"/>
+
+         <var name="lbc_qr" name_in_code="qr" array_group="moist"  units="kg kg^{-1} s^{-1}"
+              description="Lateral boundary tendency of rain water mixing ratio"/>
+
+         <var name="lbc_qi" name_in_code="qi" array_group="moist"  units="kg kg^{-1} s^{-1}"
+              description="Lateral boundary tendency of ice mixing ratio"/>
+
+         <var name="lbc_qs" name_in_code="qs" array_group="moist"  units="kg kg^{-1} s^{-1}"
+              description="Lateral boundary tendency of snow mixing ratio"/>
+
+         <var name="lbc_qg" name_in_code="qg" array_group="moist"  units="kg kg^{-1} s^{-1}"
+              description="Lateral boundary tendency of graupel mixing ratio"/>
+       </var_array>
+    </var_struct>
 </registry>
