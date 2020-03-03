@@ -82,6 +82,7 @@
 				input_interval="03:00:00"
             runtime_format="separate_file">
 
+            <var name="xtime"/>
             <var name="uReconstructZonal"/> 
             <var name="uReconstructMeridional"/> 
             <var name="w"/>
@@ -149,6 +150,14 @@
 		<var name="edgesOnVertex"                     type="integer"  dimensions="vertexDegree nVertices"/>
 		<var name="cellsOnVertex"                     type="integer"  dimensions="vertexDegree nVertices"/>
 		<var name="kiteAreasOnVertex"                 type="real"     dimensions="vertexDegree nVertices"/>
+
+      <var name="north" type="real" dimensions="vertexDegree nCells" description="Unit north vector at cell center"/>
+      <var name="east" type="real" dimensions="vertexDegree nCells" description="Unit east vector at cell center"/>
+
+		<var name="edgeNormalVectors"                 type="real"     dimensions="vertexDegree nEdges"/>
+		<var name="cellTangentPlane"                  type="real"     dimensions="vertexDegree TWO nCells"/>
+		<var name="localVerticalUnitVectors"          type="real"     dimensions="vertexDegree nCells"/>
+
 	</var_struct>
 
    <var_struct name="state" time_levs="1">

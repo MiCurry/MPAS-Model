@@ -11,7 +11,6 @@ module reconstruct_u_core
    use mpas_timekeeping
    use mpas_stream_manager
 
-
    type (MPAS_Clock_type), pointer :: clock
 
 
@@ -205,29 +204,99 @@ module reconstruct_u_core
       use mpas_vector_operations
       use mpas_geometry_utils
       use mpas_pool_routines
+      use mpas_log
    
       implicit none
    
       type (domain_type), intent(inout) :: domain
-      type (mpas_pool_type), pointer :: meshPool
+      type (mpas_pool_type), pointer :: meshPool, statePool, lbc_state
       integer, pointer :: nCells
+      integer, pointer :: nEdges
+      integer, dimension(:,:), pointer :: cellsOnEdge
+
+      real(kind=RKIND), dimension(:,:), pointer :: uZonal, uMerid
+      real(kind=RKIND), dimension(:,:), pointer :: east, north, edgeNormalVectors
+
+      real(kind=RKIND), dimension(:,:), pointer :: u
+      real(kind=RKIND), dimension(:,:), pointer :: w
+      real(kind=RKIND), dimension(:,:), pointer :: rho
+      real(kind=RKIND), dimension(:,:), pointer :: theta
+      real(kind=RKIND), dimension(:,:,:), pointer :: scalars
+
+      real(kind=RKIND), dimension(:,:), pointer :: lbc_u
+      real(kind=RKIND), dimension(:,:), pointer :: lbc_w
+      real(kind=RKIND), dimension(:,:), pointer :: lbc_rho
+      real(kind=RKIND), dimension(:,:), pointer :: lbc_theta
+      real(kind=RKIND), dimension(:,:,:), pointer :: lbc_scalars   ! Scalars
+
       integer :: iErr
 
       type (MPAS_Time_Type) :: currTime
       character(len=StrKIND) :: timeStamp
 
-      real (kind=RKIND), dimension(:,:), pointer :: east, north
-
       call mpas_pool_get_subpool(domain % blocklist % structs, 'mesh', meshPool)
+      call mpas_pool_get_subpool(domain % blocklist % structs, 'state', statePool)
+      call mpas_pool_get_subpool(domain % blocklist % structs, 'lbc_state', lbc_state)
+
       call mpas_pool_get_dimension(meshPool, 'nCells', nCells)
+      call mpas_pool_get_dimension(meshPool, 'nEdges', nEdges)
 
       iErr = 0
 
-      do while (.not. mpas_is_clock_stop_time(clock))
+      do while (.true.)
          currTime = mpas_get_clock_time(clock, MPAS_NOW, ierr)
          call mpas_get_time(curr_time=currTime, dateTimeString=timeStamp, ierr=ierr)
 
          call mpas_log_write('Current time = '//trim(timeStamp))
+         call mpas_log_write("Reading a new time from the state stream...")
+         call mpas_stream_mgr_read(domain % streamManager)
+
+         ! Compute north and east vectors
+         call mpas_log_write("Computing north and east vectors at cell centers... ")
+         call cam_mpas_compute_unit_vectors(domain)
+
+         ! Get arrays from pools
+         call mpas_log_write("Computing unit u vectors on edges...")
+         call mpas_pool_get_array(statePool, 'uReconstructZonal', uZonal)
+         call mpas_pool_get_array(statePool, 'uReconstructMeridional', uMerid)
+
+         call mpas_pool_get_array(meshPool, 'east', east)
+         call mpas_pool_get_array(meshPool, 'north', north)
+         call mpas_pool_get_array(meshPool, 'edgeNormalVectors', edgeNormalVectors)
+         call mpas_pool_get_array(meshPool, 'cellsOnEdge', cellsOnEdge)
+
+         call mpas_pool_get_array(lbc_state, 'lbc_u', lbc_u)
+
+         call cam_mpas_cell_to_edge_winds(nEdges, uZonal, uMerid, east, north, edgeNormalVectors, cellsOnEdge, lbc_u)
+
+         ! Rename other variables to lbc variables
+         call mpas_log_write("Copying lbc state variables ...")
+
+         call mpas_pool_get_array(statePool, 'w', w)
+         call mpas_pool_get_array(statePool, 'rho', rho)
+         call mpas_pool_get_array(statePool, 'theta', theta)
+         call mpas_pool_get_array(statePool, 'scalars', scalars)
+
+         call mpas_pool_get_array(lbc_state, 'lbc_w', lbc_w)
+         call mpas_pool_get_array(lbc_state, 'lbc_rho', lbc_rho)
+         call mpas_pool_get_array(lbc_state, 'lbc_theta', lbc_theta)
+         call mpas_pool_get_array(lbc_state, 'lbc_scalars', lbc_scalars)
+
+         lbc_w = w
+         lbc_rho = rho
+         lbc_theta = theta
+         lbc_scalars = scalars
+
+         call mpas_log_write("Writing ...")
+         call MPAS_stream_mgr_write(domain % streamManager)
+         call mpas_log_write("")
+         call mpas_log_write("")
+
+         call mpas_stream_mgr_reset_alarms(domain % streamManager, direction=MPAS_STREAM_INPUT, ierr=iErr)
+
+         if (mpas_is_clock_stop_time(clock)) then
+            exit
+         endif
 
          call mpas_advance_clock(clock)
       end do
@@ -235,8 +304,6 @@ module reconstruct_u_core
       currTime = mpas_get_clock_time(clock, MPAS_NOW, ierr)
       call mpas_get_time(curr_time=currTime, dateTimeString=timeStamp, ierr=ierr)
       call mpas_log_write('Final time = '//trim(timeStamp))
-
-      call mpas_stream_mgr_write(domain % streamManager, forceWriteNow=.true.)
 
    end function reconstruct_u_core_run
 
