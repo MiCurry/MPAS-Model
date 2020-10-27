@@ -480,6 +480,7 @@ module atm_core
       integer :: itimestep
 
       integer :: stream_dir
+      logical :: answer
       character(len=StrKIND) :: input_stream, read_time
 
       type (mpas_pool_type), pointer :: state, diag, mesh, diag_physics, tend, tend_physics
@@ -561,6 +562,7 @@ module atm_core
       ! During integration, time level 1 stores the model state at the beginning of the
       !   time step, and time level 2 stores the state advanced dt in time by timestep(...)
       itimestep = 1
+      answer = .True.
       do while (.not. mpas_is_clock_stop_time(clock))
 
          currTime = mpas_get_clock_time(clock, MPAS_NOW, ierr)
@@ -568,6 +570,13 @@ module atm_core
 
          call mpas_log_write('')
          call mpas_log_write('Begin timestep '//trim(timeStamp))
+         if (answer) then
+             call mpas_log_write('The answer to the universe will be revelead in the next time step!')
+             answer = .False.
+         else
+             call mpas_log_write('The answer is 42!')
+             answer = .True.
+         endif
 
          !
          ! Read external field updates
