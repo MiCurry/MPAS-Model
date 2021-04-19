@@ -5,6 +5,10 @@
 ! Additional copyright and license information can be found in the LICENSE file
 ! distributed with this code, or at http://mpas-dev.github.com/license.html
 !
+
+#define COMMA ,
+#define IO_DEBUG_WRITE(M) call mpas_log_write(M, messageType=MPAS_LOG_ERR)
+
 module mpas_io
 
    use mpas_derived_types
@@ -116,7 +120,6 @@ module mpas_io
       if (present(io_system)) then
          ioContext % pio_iosystem => io_system
       else
-!call mpas_log_write('MGD PIO_init')
          if ( io_task_count < 0 .or. io_task_count > ioContext % dminfo % nprocs ) then
             call mpas_log_write('PIO io_task_count has a value of $i.', MPAS_LOG_ERR, intArgs=(/io_task_count/))
             call mpas_log_write('        It must be between 1 and $i.', MPAS_LOG_ERR, intArgs=(/ioContext % dminfo % nprocs/) )
@@ -211,7 +214,6 @@ module mpas_io
 
    end subroutine MPAS_io_unset_iotype
 
-   
    type (MPAS_IO_Handle_type) function MPAS_io_open(filename, mode, ioformat, ioContext, &
                                                     clobber_file, truncate_file, pio_file_desc, ierr)
 
@@ -311,9 +313,11 @@ module mpas_io
  
             if (exists .and. (.not. local_truncate)) then
                pio_ierr = PIO_openfile(ioContext % pio_iosystem, MPAS_io_open % pio_file, pio_iotype, trim(filename), PIO_write)
+               IO_DEBUG_WRITE('PIO_openfile returned $i' COMMA intArgs=(/pio_ierr/))
                MPAS_io_open % preexisting_file = .true.
             else
                pio_ierr = PIO_createfile(ioContext % pio_iosystem, MPAS_io_open % pio_file, pio_iotype, trim(filename), pio_mode)
+               IO_DEBUG_WRITE('PIO_createfile returned $i' COMMA intArgs=(/pio_ierr/))
 #ifdef MPAS_DEBUG
                if (exists) then
                   call mpas_log_write('MPAS I/O: Truncating existing data in output file '//trim(filename), MPAS_LOG_WARN)
@@ -329,6 +333,7 @@ module mpas_io
             end if
 !call mpas_log_write('MGD PIO_openfile')
             pio_ierr = PIO_openfile(ioContext % pio_iosystem, MPAS_io_open % pio_file, pio_iotype, trim(filename), PIO_nowrite)
+            IO_DEBUG_WRITE('PIO_openfile returned $i' COMMA intArgs=(/pio_ierr/))
          endif
          if (pio_ierr /= PIO_noerr) then
             if (present(ierr)) ierr = MPAS_IO_ERR_PIO
@@ -340,6 +345,7 @@ module mpas_io
       if (mode == MPAS_IO_READ .or. MPAS_io_open % preexisting_file) then
 !MPAS_io_open % pio_unlimited_dimid = 44
          pio_ierr = PIO_inquire(MPAS_io_open % pio_file, unlimitedDimID=MPAS_io_open % pio_unlimited_dimid)
+         IO_DEBUG_WRITE('PIO_inquire returned $i' COMMA intArgs=(/pio_ierr/))
 !call mpas_log_write('Found unlimited dim $i', intArgs=(/MPAS_io_open % pio_unlimited_dimid/) )
          if (pio_ierr /= PIO_noerr) then
             if (present(ierr)) ierr = MPAS_IO_ERR_PIO
@@ -352,6 +358,7 @@ module mpas_io
          ! shouldn't break for files with unlimited dimensions.
          if ( MPAS_io_open % pio_unlimited_dimid >= 0 ) then
             pio_ierr = PIO_inq_dimlen(MPAS_io_open % pio_file, MPAS_io_open % pio_unlimited_dimid, MPAS_io_open % preexisting_records)
+            IO_DEBUG_WRITE('PIO_inq_dimlen (unlimited dimension) returned $i' COMMA intArgs=(/pio_ierr/))
             if (pio_ierr /= PIO_noerr) then
                if (present(ierr)) ierr = MPAS_IO_ERR_PIO
                return
@@ -366,8 +373,7 @@ module mpas_io
       return
 
    end function MPAS_io_open
-
-
+   
    subroutine MPAS_io_inq_unlimited_dim(handle, dimname, ierr)
 
       implicit none
@@ -392,6 +398,7 @@ module mpas_io
       end if
 
       pio_ierr = PIO_inq_dimname(handle % pio_file, handle % pio_unlimited_dimid, dimname) 
+      IO_DEBUG_WRITE('PIO_inq_dimname ('//trim(dimname)//') returned $i' COMMA intArgs=(/pio_ierr/))
       if (pio_ierr /= PIO_noerr) then
          if (present(ierr)) ierr = MPAS_IO_ERR_NO_UNLIMITED_DIM
          dimname = ' '
@@ -447,6 +454,7 @@ module mpas_io
       new_dimlist_node % dimhandle % dimname = dimname
 
       pio_ierr = PIO_inq_dimid(handle % pio_file, trim(dimname), new_dimlist_node % dimhandle % dimid)
+      IO_DEBUG_WRITE('PIO_inq_dimid returned $i' COMMA intArgs=(/pio_ierr/))
       if (pio_ierr /= PIO_noerr) then
          if (present(ierr)) ierr = MPAS_IO_ERR_MISSING_DIM
          deallocate(new_dimlist_node % dimhandle)
@@ -458,6 +466,7 @@ module mpas_io
       if (new_dimlist_node % dimhandle % dimid == handle % pio_unlimited_dimid) new_dimlist_node % dimhandle % is_unlimited_dim = .true.
 
       pio_ierr = PIO_inq_dimlen(handle % pio_file, new_dimlist_node % dimhandle % dimid, new_dimlist_node % dimhandle % dimsize)
+      IO_DEBUG_WRITE('PIO_inq_dimlen returned $i' COMMA intArgs=(/pio_ierr/))
       if (pio_ierr /= PIO_noerr) then
          if (present(ierr)) ierr = MPAS_IO_ERR_PIO
          deallocate(new_dimlist_node % dimhandle)
@@ -572,8 +581,10 @@ module mpas_io
       if (dimsize == MPAS_IO_UNLIMITED_DIM) then
          new_dimlist_node % dimhandle % is_unlimited_dim = .true.
          pio_ierr = PIO_def_dim(handle % pio_file, trim(dimname), PIO_unlimited, new_dimlist_node % dimhandle % dimid)
+         IO_DEBUG_WRITE('PIO_def_dim ('//trim(dimname)//') returned $i' COMMA intArgs=(/pio_ierr/))
       else
          pio_ierr = PIO_def_dim(handle % pio_file, trim(dimname), dimsize, new_dimlist_node % dimhandle % dimid)
+         IO_DEBUG_WRITE('PIO_def_dim ('//trim(dimname)//') returned $i' COMMA intArgs=(/pio_ierr/))
       end if
       if (pio_ierr /= PIO_noerr) then
          if (present(ierr)) ierr = MPAS_IO_ERR_PIO
@@ -658,7 +669,9 @@ module mpas_io
 
          ! Get variable ID
          pio_ierr = PIO_inq_varid(handle % pio_file, trim(fieldname), new_fieldlist_node % fieldhandle % fieldid)
+         IO_DEBUG_WRITE('PIO_inq_varid ('//trim(fieldname)//') returned $i' COMMA intArgs=(/pio_ierr/))
          pio_ierr = PIO_inq_varid(handle % pio_file, trim(fieldname), new_fieldlist_node % fieldhandle % field_desc)
+         IO_DEBUG_WRITE('PIO_inq_varid ('//trim(fieldname)//') returned $i' COMMA intArgs=(/pio_ierr/))
          if (pio_ierr /= PIO_noerr) then
             if (present(ierr)) ierr = MPAS_IO_ERR_PIO
             deallocate(new_fieldlist_node % fieldhandle)
@@ -670,6 +683,7 @@ module mpas_io
 
          ! Get field type
          pio_ierr = PIO_inq_vartype(handle % pio_file, new_fieldlist_node % fieldhandle % fieldid, new_fieldlist_node % fieldhandle % field_type)
+         IO_DEBUG_WRITE('PIO_inq_vartype ('//trim(fieldname)//') returned $i' COMMA intArgs=(/pio_ierr/))
          if (pio_ierr /= PIO_noerr) then
             if (present(ierr)) ierr = MPAS_IO_ERR_PIO
             deallocate(new_fieldlist_node % fieldhandle)
@@ -695,6 +709,7 @@ module mpas_io
 
          ! Get number of dimensions
          pio_ierr = PIO_inq_varndims(handle % pio_file, new_fieldlist_node % fieldhandle % fieldid, new_fieldlist_node % fieldhandle % ndims)
+         IO_DEBUG_WRITE('PIO_inq_varndims ('//trim(fieldname)//') returned $i' COMMA intArgs=(/pio_ierr/))
          if (pio_ierr /= PIO_noerr) then
             if (present(ierr)) ierr = MPAS_IO_ERR_PIO
             deallocate(new_fieldlist_node % fieldhandle)
@@ -708,6 +723,7 @@ module mpas_io
          ! Get dimension IDs
          if (new_fieldlist_node % fieldhandle % ndims > 0) then
             pio_ierr = PIO_inq_vardimid(handle % pio_file, new_fieldlist_node % fieldhandle % fieldid, dimids)
+            IO_DEBUG_WRITE('PIO_inq_vardimid ('//trim(fieldname)//') returned $i' COMMA intArgs=(/pio_ierr/))
             if (pio_ierr /= PIO_noerr) then
                if (present(ierr)) ierr = MPAS_IO_ERR_PIO
                deallocate(new_fieldlist_node % fieldhandle)
@@ -729,6 +745,7 @@ module mpas_io
             end if
 
             pio_ierr = PIO_inq_dimlen(handle % pio_file, dimids(i), new_fieldlist_node % fieldhandle % dims(i) % dimsize)
+            IO_DEBUG_WRITE('PIO_inq_dimlen returned $i' COMMA intArgs=(/pio_ierr/))
             if (pio_ierr /= PIO_noerr) then
                if (present(ierr)) ierr = MPAS_IO_ERR_PIO
                deallocate(new_fieldlist_node % fieldhandle)
@@ -739,6 +756,7 @@ module mpas_io
 !call mpas_log_write('Inquired about dimension size $i', intArgs=(/new_fieldlist_node % fieldhandle % dims(i) % dimsize/)
 
             pio_ierr = PIO_inq_dimname(handle % pio_file, dimids(i), new_fieldlist_node % fieldhandle % dims(i) % dimname)
+            IO_DEBUG_WRITE('PIO_inq_dimname returned $i' COMMA intArgs=(/pio_ierr/))
             if (pio_ierr /= PIO_noerr) then
                if (present(ierr)) ierr = MPAS_IO_ERR_PIO
                deallocate(new_fieldlist_node % fieldhandle)
@@ -1009,8 +1027,10 @@ module mpas_io
 
       if (ndims == 0) then
          pio_ierr = PIO_def_var(handle % pio_file, trim(fieldname), pio_type, new_fieldlist_node % fieldhandle % field_desc)
+         IO_DEBUG_WRITE('PIO_def_var ('//trim(fieldname)//') returned $i' COMMA intArgs=(/pio_ierr/))
       else
          pio_ierr = PIO_def_var(handle % pio_file, trim(fieldname), pio_type, dimids, new_fieldlist_node % fieldhandle % field_desc)
+         IO_DEBUG_WRITE('PIO_def_var ('//trim(fieldname)//') returned $i' COMMA intArgs=(/pio_ierr/))
       end if
       if (pio_ierr /= PIO_noerr) then
          if (present(ierr)) ierr = MPAS_IO_ERR_PIO
@@ -1019,6 +1039,7 @@ module mpas_io
 
       ! Get the varid for use by put_att routines
       pio_ierr = PIO_inq_varid(handle % pio_file, trim(fieldname), new_fieldlist_node % fieldhandle % fieldid)
+      IO_DEBUG_WRITE('PIO_inq_varid ('//trim(fieldname)//') returned $i' COMMA intArgs=(/pio_ierr/))
       if (pio_ierr /= PIO_noerr) then
          if (present(ierr)) ierr = MPAS_IO_ERR_PIO
          return
@@ -1334,6 +1355,7 @@ module mpas_io
 
       dimlist(ndims) = field_cursor % fieldhandle % dims(ndims) % dimsize
       call PIO_initdecomp(handle % ioContext % pio_iosystem, pio_type, dimlist, compdof, new_decomp % decomphandle % pio_iodesc)
+      IO_DEBUG_WRITE('PIO_initdecomp')
 
       ! Add new decomposition to the list
       if (.not. associated(handle % ioContext % decomp_list)) then
@@ -1440,8 +1462,10 @@ module mpas_io
       if (field_cursor % fieldhandle % has_unlimited_dim) then
 #ifdef USE_PIO2
          call PIO_setframe(handle % pio_file, field_cursor % fieldhandle % field_desc, handle % frame_number)
+         IO_DEBUG_WRITE('PIO_setframe ($i)' COMMA intArgs=(/int(handle % frame_number)/))
 #else
          call PIO_setframe(field_cursor % fieldhandle % field_desc, handle % frame_number)
+         IO_DEBUG_WRITE('PIO_setframe ($i)' COMMA intArgs=(/int(handle % frame_number)/))
 #endif
          start1(1) = handle % frame_number
          count1(1) = 1
@@ -1458,42 +1482,52 @@ module mpas_io
              (MPAS_IO_NATIVE_PRECISION /= MPAS_IO_SINGLE_PRECISION)) then
             if (field_cursor % fieldhandle % has_unlimited_dim) then
                pio_ierr = PIO_get_var(handle % pio_file, field_cursor % fieldhandle % field_desc, start1, singleVal)
+               IO_DEBUG_WRITE('PIO_get_var ('//trim(fieldname)//') returned $i' COMMA intArgs=(/pio_ierr/))
             else
                pio_ierr = PIO_get_var(handle % pio_file, field_cursor % fieldhandle % field_desc, singleVal)
+               IO_DEBUG_WRITE('PIO_get_var ('//trim(fieldname)//') returned $i' COMMA intArgs=(/pio_ierr/))
             end if
             realVal = real(singleVal,RKIND)
          else if ((field_cursor % fieldhandle % precision == MPAS_IO_DOUBLE_PRECISION) .and. &
              (MPAS_IO_NATIVE_PRECISION /= MPAS_IO_DOUBLE_PRECISION)) then
             if (field_cursor % fieldhandle % has_unlimited_dim) then
                pio_ierr = PIO_get_var(handle % pio_file, field_cursor % fieldhandle % field_desc, start1, doubleVal)
+               IO_DEBUG_WRITE('PIO_get_var ('//trim(fieldname)//') returned $i' COMMA intArgs=(/pio_ierr/))
             else
                pio_ierr = PIO_get_var(handle % pio_file, field_cursor % fieldhandle % field_desc, doubleVal)
+               IO_DEBUG_WRITE('PIO_get_var ('//trim(fieldname)//') returned $i' COMMA intArgs=(/pio_ierr/))
             end if
             realVal = real(doubleVal,RKIND)
          else
             if (field_cursor % fieldhandle % has_unlimited_dim) then
                pio_ierr = PIO_get_var(handle % pio_file, field_cursor % fieldhandle % field_desc, start1, realVal)
+               IO_DEBUG_WRITE('PIO_get_var ('//trim(fieldname)//') returned $i' COMMA intArgs=(/pio_ierr/))
             else
                pio_ierr = PIO_get_var(handle % pio_file, field_cursor % fieldhandle % field_desc, realVal)
+               IO_DEBUG_WRITE('PIO_get_var ('//trim(fieldname)//') returned $i' COMMA intArgs=(/pio_ierr/))
             end if
          end if
       else if (present(intVal)) then
 !         call mpas_log_write('  value is int')
          if (field_cursor % fieldhandle % has_unlimited_dim) then
             pio_ierr = PIO_get_var(handle % pio_file, field_cursor % fieldhandle % field_desc, start1, intVal)
+            IO_DEBUG_WRITE('PIO_get_var ('//trim(fieldname)//') returned $i' COMMA intArgs=(/pio_ierr/))
          else
             pio_ierr = PIO_get_var(handle % pio_file, field_cursor % fieldhandle % field_desc, intVal)
+            IO_DEBUG_WRITE('PIO_get_var ('//trim(fieldname)//') returned $i' COMMA intArgs=(/pio_ierr/))
          end if
       else if (present(charVal)) then
 !         call mpas_log_write('  value is char')
          if (field_cursor % fieldhandle % has_unlimited_dim) then
             count2(1) = field_cursor % fieldhandle % dims(1) % dimsize
             pio_ierr = PIO_get_var(handle % pio_file, field_cursor % fieldhandle % fieldid, start2, count2, tempchar)
+            IO_DEBUG_WRITE('PIO_get_var ('//trim(fieldname)//') returned $i' COMMA intArgs=(/pio_ierr/))
             charVal(1:count2(1)) = tempchar(1)(1:count2(1))
          else
             start1(1) = 1
             count1(1) = field_cursor % fieldhandle % dims(1) % dimsize
             pio_ierr = PIO_get_var(handle % pio_file, field_cursor % fieldhandle % fieldid, start1, count1, tempchar)
+            IO_DEBUG_WRITE('PIO_get_var ('//trim(fieldname)//') returned $i' COMMA intArgs=(/pio_ierr/))
             charVal(1:count1(1)) = tempchar(1)(1:count1(1))
          end if
       else if (present(charArray1d)) then
@@ -1508,6 +1542,7 @@ module mpas_io
                count3(2) = 1
                count3(3) = 1
                pio_ierr = PIO_get_var(handle % pio_file, field_cursor % fieldhandle % fieldid, start3, count3, tempchar)
+               IO_DEBUG_WRITE('PIO_get_var ('//trim(fieldname)//') returned $i' COMMA intArgs=(/pio_ierr/))
 
                ! Copy all characters up to the first C null char or the end of
                ! the string, whichever comes first
@@ -1528,6 +1563,7 @@ module mpas_io
                count2(1) = field_cursor % fieldhandle % dims(1) % dimsize ! Should be StrLen
                count2(2) = 1
                pio_ierr = PIO_get_var(handle % pio_file, field_cursor % fieldhandle % fieldid, start2, count2, tempchar)
+               IO_DEBUG_WRITE('PIO_get_var ('//trim(fieldname)//') returned $i' COMMA intArgs=(/pio_ierr/))
 
                ! Copy all characters up to the first C null char or the end of
                ! the string, whichever comes first
@@ -1549,6 +1585,7 @@ module mpas_io
             if (associated(field_cursor % fieldhandle % decomp)) then
                call PIO_read_darray(handle % pio_file, field_cursor % fieldhandle % field_desc, field_cursor % fieldhandle % decomp % pio_iodesc, &
                                     singleArray1d, pio_ierr)
+               IO_DEBUG_WRITE('PIO_read_darray ('//trim(fieldname)//') returned $i' COMMA intArgs=(/pio_ierr/))
             else
                if (field_cursor % fieldhandle % has_unlimited_dim) then
                   start2(1) = 1
@@ -1556,10 +1593,12 @@ module mpas_io
                   count2(1) = field_cursor % fieldhandle % dims(1) % dimsize
                   count2(2) = 1
                   pio_ierr = PIO_get_var(handle % pio_file, field_cursor % fieldhandle % fieldid, start2, count2, singleArray1d)
+                  IO_DEBUG_WRITE('PIO_get_var ('//trim(fieldname)//') returned $i' COMMA intArgs=(/pio_ierr/))
                else
                   start1(:) = 1
                   count1(1) = field_cursor % fieldhandle % dims(1) % dimsize
                   pio_ierr = PIO_get_var(handle % pio_file, field_cursor % fieldhandle % fieldid, start1, count1, singleArray1d)
+                  IO_DEBUG_WRITE('PIO_get_var ('//trim(fieldname)//') returned $i' COMMA intArgs=(/pio_ierr/))
                end if
             end if
             realArray1d(:) = real(singleArray1d(:),RKIND)
@@ -1570,6 +1609,7 @@ module mpas_io
             if (associated(field_cursor % fieldhandle % decomp)) then
                call PIO_read_darray(handle % pio_file, field_cursor % fieldhandle % field_desc, field_cursor % fieldhandle % decomp % pio_iodesc, &
                                     doubleArray1d, pio_ierr)
+               IO_DEBUG_WRITE('PIO_read_darray ('//trim(fieldname)//') returned $i' COMMA intArgs=(/pio_ierr/))
             else
                if (field_cursor % fieldhandle % has_unlimited_dim) then
                   start2(1) = 1
@@ -1577,10 +1617,12 @@ module mpas_io
                   count2(1) = field_cursor % fieldhandle % dims(1) % dimsize
                   count2(2) = 1
                   pio_ierr = PIO_get_var(handle % pio_file, field_cursor % fieldhandle % fieldid, start2, count2, doubleArray1d)
+                  IO_DEBUG_WRITE('PIO_get_var ('//trim(fieldname)//') returned $i' COMMA intArgs=(/pio_ierr/))
                else
                   start1(:) = 1
                   count1(1) = field_cursor % fieldhandle % dims(1) % dimsize
                   pio_ierr = PIO_get_var(handle % pio_file, field_cursor % fieldhandle % fieldid, start1, count1, doubleArray1d)
+                  IO_DEBUG_WRITE('PIO_get_var ('//trim(fieldname)//') returned $i' COMMA intArgs=(/pio_ierr/))
                end if
             end if
             realArray1d(:) = real(doubleArray1d(:),RKIND)
@@ -1589,6 +1631,7 @@ module mpas_io
             if (associated(field_cursor % fieldhandle % decomp)) then
                call PIO_read_darray(handle % pio_file, field_cursor % fieldhandle % field_desc, field_cursor % fieldhandle % decomp % pio_iodesc, &
                                     realArray1d, pio_ierr)
+               IO_DEBUG_WRITE('PIO_read_darray ('//trim(fieldname)//') returned $i' COMMA intArgs=(/pio_ierr/))
             else
                if (field_cursor % fieldhandle % has_unlimited_dim) then
                   start2(1) = 1
@@ -1596,10 +1639,12 @@ module mpas_io
                   count2(1) = field_cursor % fieldhandle % dims(1) % dimsize
                   count2(2) = 1
                   pio_ierr = PIO_get_var(handle % pio_file, field_cursor % fieldhandle % fieldid, start2, count2, realArray1d)
+                  IO_DEBUG_WRITE('PIO_get_var ('//trim(fieldname)//') returned $i' COMMA intArgs=(/pio_ierr/))
                else
                   start1(:) = 1
                   count1(1) = field_cursor % fieldhandle % dims(1) % dimsize
                   pio_ierr = PIO_get_var(handle % pio_file, field_cursor % fieldhandle % fieldid, start1, count1, realArray1d)
+                  IO_DEBUG_WRITE('PIO_get_var ('//trim(fieldname)//') returned $i' COMMA intArgs=(/pio_ierr/))
                end if
             end if
          end if
@@ -1611,6 +1656,7 @@ module mpas_io
             if (associated(field_cursor % fieldhandle % decomp)) then
                call PIO_read_darray(handle % pio_file, field_cursor % fieldhandle % field_desc, field_cursor % fieldhandle % decomp % pio_iodesc, &
                                     singleArray2d, pio_ierr)
+               IO_DEBUG_WRITE('PIO_read_darray ('//trim(fieldname)//') returned $i' COMMA intArgs=(/pio_ierr/))
             else
                if (field_cursor % fieldhandle % has_unlimited_dim) then
                   start3(:) = 1
@@ -1619,11 +1665,13 @@ module mpas_io
                   count3(2) = field_cursor % fieldhandle % dims(2) % dimsize
                   count3(3) = 1
                   pio_ierr = PIO_get_var(handle % pio_file, field_cursor % fieldhandle % fieldid, start3, count3, singleArray2d)
+                  IO_DEBUG_WRITE('PIO_get_var ('//trim(fieldname)//') returned $i' COMMA intArgs=(/pio_ierr/))
                else
                   start2(:) = 1
                   count2(1) = field_cursor % fieldhandle % dims(1) % dimsize
                   count2(2) = field_cursor % fieldhandle % dims(2) % dimsize
                   pio_ierr = PIO_get_var(handle % pio_file, field_cursor % fieldhandle % fieldid, start2, count2, singleArray2d)
+                  IO_DEBUG_WRITE('PIO_get_var ('//trim(fieldname)//') returned $i' COMMA intArgs=(/pio_ierr/))
                end if
             end if
             realArray2d(:,:) = real(singleArray2d(:,:),RKIND)
@@ -1634,6 +1682,7 @@ module mpas_io
             if (associated(field_cursor % fieldhandle % decomp)) then
                call PIO_read_darray(handle % pio_file, field_cursor % fieldhandle % field_desc, field_cursor % fieldhandle % decomp % pio_iodesc, &
                                     doubleArray2d, pio_ierr)
+               IO_DEBUG_WRITE('PIO_read_darray ('//trim(fieldname)//') returned $i' COMMA intArgs=(/pio_ierr/))
             else
                if (field_cursor % fieldhandle % has_unlimited_dim) then
                   start3(:) = 1
@@ -1642,11 +1691,13 @@ module mpas_io
                   count3(2) = field_cursor % fieldhandle % dims(2) % dimsize
                   count3(3) = 1
                   pio_ierr = PIO_get_var(handle % pio_file, field_cursor % fieldhandle % fieldid, start3, count3, doubleArray2d)
+                  IO_DEBUG_WRITE('PIO_get_var ('//trim(fieldname)//') returned $i' COMMA intArgs=(/pio_ierr/))
                else
                   start2(:) = 1
                   count2(1) = field_cursor % fieldhandle % dims(1) % dimsize
                   count2(2) = field_cursor % fieldhandle % dims(2) % dimsize
                   pio_ierr = PIO_get_var(handle % pio_file, field_cursor % fieldhandle % fieldid, start2, count2, doubleArray2d)
+                  IO_DEBUG_WRITE('PIO_get_var ('//trim(fieldname)//') returned $i' COMMA intArgs=(/pio_ierr/))
                end if
             end if
             realArray2d(:,:) = real(doubleArray2d(:,:),RKIND)
@@ -1655,6 +1706,7 @@ module mpas_io
             if (associated(field_cursor % fieldhandle % decomp)) then
                call PIO_read_darray(handle % pio_file, field_cursor % fieldhandle % field_desc, field_cursor % fieldhandle % decomp % pio_iodesc, &
                                     realArray2d, pio_ierr)
+               IO_DEBUG_WRITE('PIO_read_darray ('//trim(fieldname)//') returned $i' COMMA intArgs=(/pio_ierr/))
             else
                if (field_cursor % fieldhandle % has_unlimited_dim) then
                   start3(:) = 1
@@ -1663,11 +1715,13 @@ module mpas_io
                   count3(2) = field_cursor % fieldhandle % dims(2) % dimsize
                   count3(3) = 1
                   pio_ierr = PIO_get_var(handle % pio_file, field_cursor % fieldhandle % fieldid, start3, count3, realArray2d)
+                  IO_DEBUG_WRITE('PIO_get_var ('//trim(fieldname)//') returned $i' COMMA intArgs=(/pio_ierr/))
                else
                   start2(:) = 1
                   count2(1) = field_cursor % fieldhandle % dims(1) % dimsize
                   count2(2) = field_cursor % fieldhandle % dims(2) % dimsize
                   pio_ierr = PIO_get_var(handle % pio_file, field_cursor % fieldhandle % fieldid, start2, count2, realArray2d)
+                  IO_DEBUG_WRITE('PIO_get_var ('//trim(fieldname)//') returned $i' COMMA intArgs=(/pio_ierr/))
                end if
             end if
          end if
@@ -1679,6 +1733,7 @@ module mpas_io
             if (associated(field_cursor % fieldhandle % decomp)) then
                call PIO_read_darray(handle % pio_file, field_cursor % fieldhandle % field_desc, field_cursor % fieldhandle % decomp % pio_iodesc, &
                                     singleArray3d, pio_ierr)
+               IO_DEBUG_WRITE('PIO_read_darray ('//trim(fieldname)//') returned $i' COMMA intArgs=(/pio_ierr/))
             else
                if (field_cursor % fieldhandle % has_unlimited_dim) then
                   start4(:) = 1
@@ -1688,12 +1743,14 @@ module mpas_io
                   count4(3) = field_cursor % fieldhandle % dims(3) % dimsize
                   count4(4) = 1
                   pio_ierr = PIO_get_var(handle % pio_file, field_cursor % fieldhandle % fieldid, start4, count4, singleArray3d)
+                  IO_DEBUG_WRITE('PIO_get_var ('//trim(fieldname)//') returned $i' COMMA intArgs=(/pio_ierr/))
                else
                   start3(:) = 1
                   count3(1) = field_cursor % fieldhandle % dims(1) % dimsize
                   count3(2) = field_cursor % fieldhandle % dims(2) % dimsize
                   count3(3) = field_cursor % fieldhandle % dims(3) % dimsize
                   pio_ierr = PIO_get_var(handle % pio_file, field_cursor % fieldhandle % fieldid, start3, count3, singleArray3d)
+                  IO_DEBUG_WRITE('PIO_get_var ('//trim(fieldname)//') returned $i' COMMA intArgs=(/pio_ierr/))
                end if
             end if
             realArray3d(:,:,:) = real(singleArray3d(:,:,:),RKIND)
@@ -1704,6 +1761,7 @@ module mpas_io
             if (associated(field_cursor % fieldhandle % decomp)) then
                call PIO_read_darray(handle % pio_file, field_cursor % fieldhandle % field_desc, field_cursor % fieldhandle % decomp % pio_iodesc, &
                                     doubleArray3d, pio_ierr)
+               IO_DEBUG_WRITE('PIO_read_darray ('//trim(fieldname)//') returned $i' COMMA intArgs=(/pio_ierr/))
             else
                if (field_cursor % fieldhandle % has_unlimited_dim) then
                   start4(:) = 1
@@ -1713,12 +1771,14 @@ module mpas_io
                   count4(3) = field_cursor % fieldhandle % dims(3) % dimsize
                   count4(4) = 1
                   pio_ierr = PIO_get_var(handle % pio_file, field_cursor % fieldhandle % fieldid, start4, count4, doubleArray3d)
+                  IO_DEBUG_WRITE('PIO_get_var ('//trim(fieldname)//') returned $i' COMMA intArgs=(/pio_ierr/))
                else
                   start3(:) = 1
                   count3(1) = field_cursor % fieldhandle % dims(1) % dimsize
                   count3(2) = field_cursor % fieldhandle % dims(2) % dimsize
                   count3(3) = field_cursor % fieldhandle % dims(3) % dimsize
                   pio_ierr = PIO_get_var(handle % pio_file, field_cursor % fieldhandle % fieldid, start3, count3, doubleArray3d)
+                  IO_DEBUG_WRITE('PIO_get_var ('//trim(fieldname)//') returned $i' COMMA intArgs=(/pio_ierr/))
                end if
             end if
             realArray3d(:,:,:) = real(doubleArray3d(:,:,:),RKIND)
@@ -1727,6 +1787,7 @@ module mpas_io
             if (associated(field_cursor % fieldhandle % decomp)) then
                call PIO_read_darray(handle % pio_file, field_cursor % fieldhandle % field_desc, field_cursor % fieldhandle % decomp % pio_iodesc, &
                                     realArray3d, pio_ierr)
+               IO_DEBUG_WRITE('PIO_read_darray ('//trim(fieldname)//') returned $i' COMMA intArgs=(/pio_ierr/))
             else
                if (field_cursor % fieldhandle % has_unlimited_dim) then
                   start4(:) = 1
@@ -1736,12 +1797,14 @@ module mpas_io
                   count4(3) = field_cursor % fieldhandle % dims(3) % dimsize
                   count4(4) = 1
                   pio_ierr = PIO_get_var(handle % pio_file, field_cursor % fieldhandle % fieldid, start4, count4, realArray3d)
+                  IO_DEBUG_WRITE('PIO_get_var ('//trim(fieldname)//') returned $i' COMMA intArgs=(/pio_ierr/))
                else
                   start3(:) = 1
                   count3(1) = field_cursor % fieldhandle % dims(1) % dimsize
                   count3(2) = field_cursor % fieldhandle % dims(2) % dimsize
                   count3(3) = field_cursor % fieldhandle % dims(3) % dimsize
                   pio_ierr = PIO_get_var(handle % pio_file, field_cursor % fieldhandle % fieldid, start3, count3, realArray3d)
+                  IO_DEBUG_WRITE('PIO_get_var ('//trim(fieldname)//') returned $i' COMMA intArgs=(/pio_ierr/))
                end if
             end if
          end if
@@ -1753,6 +1816,7 @@ module mpas_io
             if (associated(field_cursor % fieldhandle % decomp)) then
                call PIO_read_darray(handle % pio_file, field_cursor % fieldhandle % field_desc, field_cursor % fieldhandle % decomp % pio_iodesc, &
                                     singleArray4d, pio_ierr)
+               IO_DEBUG_WRITE('PIO_read_darray ('//trim(fieldname)//') returned $i' COMMA intArgs=(/pio_ierr/))
             else
                if (field_cursor % fieldhandle % has_unlimited_dim) then
                   start5(:) = 1
@@ -1763,6 +1827,7 @@ module mpas_io
                   count5(4) = field_cursor % fieldhandle % dims(4) % dimsize
                   count5(5) = 1
                   pio_ierr = PIO_get_var(handle % pio_file, field_cursor % fieldhandle % fieldid, start5, count5, singleArray4d)
+                  IO_DEBUG_WRITE('PIO_get_var ('//trim(fieldname)//') returned $i' COMMA intArgs=(/pio_ierr/))
                else
                   start4(:) = 1
                   count4(1) = field_cursor % fieldhandle % dims(1) % dimsize
@@ -1770,6 +1835,7 @@ module mpas_io
                   count4(3) = field_cursor % fieldhandle % dims(3) % dimsize
                   count4(4) = field_cursor % fieldhandle % dims(4) % dimsize
                   pio_ierr = PIO_get_var(handle % pio_file, field_cursor % fieldhandle % fieldid, start4, count4, singleArray4d)
+                  IO_DEBUG_WRITE('PIO_get_var ('//trim(fieldname)//') returned $i' COMMA intArgs=(/pio_ierr/))
                end if
             end if
             realArray4d(:,:,:,:) = real(singleArray4d(:,:,:,:),RKIND)
@@ -1780,6 +1846,7 @@ module mpas_io
             if (associated(field_cursor % fieldhandle % decomp)) then
                call PIO_read_darray(handle % pio_file, field_cursor % fieldhandle % field_desc, field_cursor % fieldhandle % decomp % pio_iodesc, &
                                     doubleArray4d, pio_ierr)
+               IO_DEBUG_WRITE('PIO_read_darray ('//trim(fieldname)//') returned $i' COMMA intArgs=(/pio_ierr/))
             else
                if (field_cursor % fieldhandle % has_unlimited_dim) then
                   start5(:) = 1
@@ -1790,6 +1857,7 @@ module mpas_io
                   count5(4) = field_cursor % fieldhandle % dims(4) % dimsize
                   count5(5) = 1
                   pio_ierr = PIO_get_var(handle % pio_file, field_cursor % fieldhandle % fieldid, start5, count5, doubleArray4d)
+                  IO_DEBUG_WRITE('PIO_get_var ('//trim(fieldname)//') returned $i' COMMA intArgs=(/pio_ierr/))
                else
                   start4(:) = 1
                   count4(1) = field_cursor % fieldhandle % dims(1) % dimsize
@@ -1797,6 +1865,7 @@ module mpas_io
                   count4(3) = field_cursor % fieldhandle % dims(3) % dimsize
                   count4(4) = field_cursor % fieldhandle % dims(4) % dimsize
                   pio_ierr = PIO_get_var(handle % pio_file, field_cursor % fieldhandle % fieldid, start4, count4, doubleArray4d)
+                  IO_DEBUG_WRITE('PIO_get_var ('//trim(fieldname)//') returned $i' COMMA intArgs=(/pio_ierr/))
                end if
             end if
             realArray4d(:,:,:,:) = real(doubleArray4d(:,:,:,:),RKIND)
@@ -1805,6 +1874,7 @@ module mpas_io
             if (associated(field_cursor % fieldhandle % decomp)) then
                call PIO_read_darray(handle % pio_file, field_cursor % fieldhandle % field_desc, field_cursor % fieldhandle % decomp % pio_iodesc, &
                                     realArray4d, pio_ierr)
+               IO_DEBUG_WRITE('PIO_read_darray ('//trim(fieldname)//') returned $i' COMMA intArgs=(/pio_ierr/))
             else
                if (field_cursor % fieldhandle % has_unlimited_dim) then
                   start5(:) = 1
@@ -1815,6 +1885,7 @@ module mpas_io
                   count5(4) = field_cursor % fieldhandle % dims(4) % dimsize
                   count5(5) = 1
                   pio_ierr = PIO_get_var(handle % pio_file, field_cursor % fieldhandle % fieldid, start5, count5, realArray4d)
+                  IO_DEBUG_WRITE('PIO_get_var ('//trim(fieldname)//') returned $i' COMMA intArgs=(/pio_ierr/))
                else
                   start4(:) = 1
                   count4(1) = field_cursor % fieldhandle % dims(1) % dimsize
@@ -1822,6 +1893,7 @@ module mpas_io
                   count4(3) = field_cursor % fieldhandle % dims(3) % dimsize
                   count4(4) = field_cursor % fieldhandle % dims(4) % dimsize
                   pio_ierr = PIO_get_var(handle % pio_file, field_cursor % fieldhandle % fieldid, start4, count4, realArray4d)
+                  IO_DEBUG_WRITE('PIO_get_var ('//trim(fieldname)//') returned $i' COMMA intArgs=(/pio_ierr/))
                end if
             end if
          end if
@@ -1833,6 +1905,7 @@ module mpas_io
             if (associated(field_cursor % fieldhandle % decomp)) then
                call PIO_read_darray(handle % pio_file, field_cursor % fieldhandle % field_desc, field_cursor % fieldhandle % decomp % pio_iodesc, &
                                    singleArray5d, pio_ierr)
+               IO_DEBUG_WRITE('PIO_read_darray ('//trim(fieldname)//') returned $i' COMMA intArgs=(/pio_ierr/))
             else
                if (field_cursor % fieldhandle % has_unlimited_dim) then
                   start6(:) = 1
@@ -1844,6 +1917,7 @@ module mpas_io
                   count6(5) = field_cursor % fieldhandle % dims(5) % dimsize
                   count6(6) = 1
                   pio_ierr = PIO_get_var(handle % pio_file, field_cursor % fieldhandle % fieldid, start6, count6, singleArray5d)
+                  IO_DEBUG_WRITE('PIO_get_var ('//trim(fieldname)//') returned $i' COMMA intArgs=(/pio_ierr/))
                else
                   start5(:) = 1
                   count5(1) = field_cursor % fieldhandle % dims(1) % dimsize
@@ -1852,6 +1926,7 @@ module mpas_io
                   count5(4) = field_cursor % fieldhandle % dims(4) % dimsize
                   count5(5) = field_cursor % fieldhandle % dims(5) % dimsize
                   pio_ierr = PIO_get_var(handle % pio_file, field_cursor % fieldhandle % fieldid, start5, count5, singleArray5d)
+                  IO_DEBUG_WRITE('PIO_get_var ('//trim(fieldname)//') returned $i' COMMA intArgs=(/pio_ierr/))
                end if
             end if
             realArray5d(:,:,:,:,:) = real(singleArray5d(:,:,:,:,:),RKIND)
@@ -1862,6 +1937,7 @@ module mpas_io
             if (associated(field_cursor % fieldhandle % decomp)) then
                call PIO_read_darray(handle % pio_file, field_cursor % fieldhandle % field_desc, field_cursor % fieldhandle % decomp % pio_iodesc, &
                                    doubleArray5d, pio_ierr)
+               IO_DEBUG_WRITE('PIO_read_darray ('//trim(fieldname)//') returned $i' COMMA intArgs=(/pio_ierr/))
             else
                if (field_cursor % fieldhandle % has_unlimited_dim) then
                   start6(:) = 1
@@ -1873,6 +1949,7 @@ module mpas_io
                   count6(5) = field_cursor % fieldhandle % dims(5) % dimsize
                   count6(6) = 1
                   pio_ierr = PIO_get_var(handle % pio_file, field_cursor % fieldhandle % fieldid, start6, count6, doubleArray5d)
+                  IO_DEBUG_WRITE('PIO_get_var ('//trim(fieldname)//') returned $i' COMMA intArgs=(/pio_ierr/))
                else
                   start5(:) = 1
                   count5(1) = field_cursor % fieldhandle % dims(1) % dimsize
@@ -1881,6 +1958,7 @@ module mpas_io
                   count5(4) = field_cursor % fieldhandle % dims(4) % dimsize
                   count5(5) = field_cursor % fieldhandle % dims(5) % dimsize
                   pio_ierr = PIO_get_var(handle % pio_file, field_cursor % fieldhandle % fieldid, start5, count5, doubleArray5d)
+                  IO_DEBUG_WRITE('PIO_get_var ('//trim(fieldname)//') returned $i' COMMA intArgs=(/pio_ierr/))
                end if
             end if
             realArray5d(:,:,:,:,:) = real(doubleArray5d(:,:,:,:,:),RKIND)
@@ -1889,6 +1967,7 @@ module mpas_io
             if (associated(field_cursor % fieldhandle % decomp)) then
                call PIO_read_darray(handle % pio_file, field_cursor % fieldhandle % field_desc, field_cursor % fieldhandle % decomp % pio_iodesc, &
                                    realArray5d, pio_ierr)
+               IO_DEBUG_WRITE('PIO_read_darray ('//trim(fieldname)//') returned $i' COMMA intArgs=(/pio_ierr/))
             else
                if (field_cursor % fieldhandle % has_unlimited_dim) then
                   start6(:) = 1
@@ -1900,6 +1979,7 @@ module mpas_io
                   count6(5) = field_cursor % fieldhandle % dims(5) % dimsize
                   count6(6) = 1
                   pio_ierr = PIO_get_var(handle % pio_file, field_cursor % fieldhandle % fieldid, start6, count6, realArray5d)
+                  IO_DEBUG_WRITE('PIO_get_var ('//trim(fieldname)//') returned $i' COMMA intArgs=(/pio_ierr/))
                else
                   start5(:) = 1
                   count5(1) = field_cursor % fieldhandle % dims(1) % dimsize
@@ -1908,6 +1988,7 @@ module mpas_io
                   count5(4) = field_cursor % fieldhandle % dims(4) % dimsize
                   count5(5) = field_cursor % fieldhandle % dims(5) % dimsize
                   pio_ierr = PIO_get_var(handle % pio_file, field_cursor % fieldhandle % fieldid, start5, count5, realArray5d)
+                  IO_DEBUG_WRITE('PIO_get_var ('//trim(fieldname)//') returned $i' COMMA intArgs=(/pio_ierr/))
                end if
             end if
          end if
@@ -1916,6 +1997,7 @@ module mpas_io
          if (associated(field_cursor % fieldhandle % decomp)) then
             call PIO_read_darray(handle % pio_file, field_cursor % fieldhandle % field_desc, field_cursor % fieldhandle % decomp % pio_iodesc, &
                                  intArray1d, pio_ierr)
+               IO_DEBUG_WRITE('PIO_read_darray ('//trim(fieldname)//') returned $i' COMMA intArgs=(/pio_ierr/))
          else
             if (field_cursor % fieldhandle % has_unlimited_dim) then
                start2(1) = 1
@@ -1923,10 +2005,12 @@ module mpas_io
                count2(1) = field_cursor % fieldhandle % dims(1) % dimsize
                count2(2) = 1
                pio_ierr = PIO_get_var(handle % pio_file, field_cursor % fieldhandle % fieldid, start2, count2, intArray1d)
+               IO_DEBUG_WRITE('PIO_get_var ('//trim(fieldname)//') returned $i' COMMA intArgs=(/pio_ierr/))
             else
                start1(:) = 1
                count1(1) = field_cursor % fieldhandle % dims(1) % dimsize
                pio_ierr = PIO_get_var(handle % pio_file, field_cursor % fieldhandle % fieldid, start1, count1, intArray1d)
+               IO_DEBUG_WRITE('PIO_get_var ('//trim(fieldname)//') returned $i' COMMA intArgs=(/pio_ierr/))
             end if
          end if
       else if (present(intArray2d)) then
@@ -1934,6 +2018,7 @@ module mpas_io
          if (associated(field_cursor % fieldhandle % decomp)) then
             call PIO_read_darray(handle % pio_file, field_cursor % fieldhandle % field_desc, field_cursor % fieldhandle % decomp % pio_iodesc, &
                                  intArray2d, pio_ierr)
+            IO_DEBUG_WRITE('PIO_read_darray ('//trim(fieldname)//') returned $i' COMMA intArgs=(/pio_ierr/))
          else
             if (field_cursor % fieldhandle % has_unlimited_dim) then
                start3(:) = 1
@@ -1942,11 +2027,13 @@ module mpas_io
                count3(2) = field_cursor % fieldhandle % dims(2) % dimsize
                count3(3) = 1
                pio_ierr = PIO_get_var(handle % pio_file, field_cursor % fieldhandle % fieldid, start3, count3, intArray2d)
+               IO_DEBUG_WRITE('PIO_get_var ('//trim(fieldname)//') returned $i' COMMA intArgs=(/pio_ierr/))
             else
                start2(:) = 1
                count2(1) = field_cursor % fieldhandle % dims(1) % dimsize
                count2(2) = field_cursor % fieldhandle % dims(2) % dimsize
                pio_ierr = PIO_get_var(handle % pio_file, field_cursor % fieldhandle % fieldid, start2, count2, intArray2d)
+               IO_DEBUG_WRITE('PIO_get_var ('//trim(fieldname)//') returned $i' COMMA intArgs=(/pio_ierr/))
             end if
          end if
       else if (present(intArray3d)) then
@@ -1954,6 +2041,7 @@ module mpas_io
          if (associated(field_cursor % fieldhandle % decomp)) then
             call PIO_read_darray(handle % pio_file, field_cursor % fieldhandle % field_desc, field_cursor % fieldhandle % decomp % pio_iodesc, &
                                  intArray3d, pio_ierr)
+            IO_DEBUG_WRITE('PIO_read_darray ('//trim(fieldname)//') returned $i' COMMA intArgs=(/pio_ierr/))
          else
             if (field_cursor % fieldhandle % has_unlimited_dim) then
                start4(:) = 1
@@ -1963,12 +2051,14 @@ module mpas_io
                count4(3) = field_cursor % fieldhandle % dims(3) % dimsize
                count4(4) = 1
                pio_ierr = PIO_get_var(handle % pio_file, field_cursor % fieldhandle % fieldid, start4, count4, intArray3d)
+               IO_DEBUG_WRITE('PIO_get_var ('//trim(fieldname)//') returned $i' COMMA intArgs=(/pio_ierr/))
             else
                start3(:) = 1
                count3(1) = field_cursor % fieldhandle % dims(1) % dimsize
                count3(2) = field_cursor % fieldhandle % dims(2) % dimsize
                count3(3) = field_cursor % fieldhandle % dims(3) % dimsize
                pio_ierr = PIO_get_var(handle % pio_file, field_cursor % fieldhandle % fieldid, start3, count3, intArray3d)
+               IO_DEBUG_WRITE('PIO_get_var ('//trim(fieldname)//') returned $i' COMMA intArgs=(/pio_ierr/))
             end if
          end if
       else if (present(intArray4d)) then
@@ -1976,6 +2066,7 @@ module mpas_io
          if (associated(field_cursor % fieldhandle % decomp)) then
             call PIO_read_darray(handle % pio_file, field_cursor % fieldhandle % field_desc, field_cursor % fieldhandle % decomp % pio_iodesc, &
                                  intArray4d, pio_ierr)
+            IO_DEBUG_WRITE('PIO_read_darray ('//trim(fieldname)//') returned $i' COMMA intArgs=(/pio_ierr/))
          else
             if (field_cursor % fieldhandle % has_unlimited_dim) then
                start5(:) = 1
@@ -1986,6 +2077,7 @@ module mpas_io
                count5(4) = field_cursor % fieldhandle % dims(4) % dimsize
                count5(5) = 1
                pio_ierr = PIO_get_var(handle % pio_file, field_cursor % fieldhandle % fieldid, start5, count5, intArray4d)
+               IO_DEBUG_WRITE('PIO_get_var ('//trim(fieldname)//') returned $i' COMMA intArgs=(/pio_ierr/))
             else
                start4(:) = 1
                count4(1) = field_cursor % fieldhandle % dims(1) % dimsize
@@ -1993,6 +2085,7 @@ module mpas_io
                count4(3) = field_cursor % fieldhandle % dims(3) % dimsize
                count4(4) = field_cursor % fieldhandle % dims(4) % dimsize
                pio_ierr = PIO_get_var(handle % pio_file, field_cursor % fieldhandle % fieldid, start4, count4, intArray4d)
+               IO_DEBUG_WRITE('PIO_get_var ('//trim(fieldname)//') returned $i' COMMA intArgs=(/pio_ierr/))
             end if
          end if
       end if
@@ -2317,12 +2410,12 @@ module mpas_io
          handle % data_mode = .true.
 
          pio_ierr = PIO_enddef(handle % pio_file)
+         IO_DEBUG_WRITE('PIO_enddef returned $i' COMMA intArgs=(/pio_ierr/))
          ! If we are working with a preexisting file, we likely didn't define
          ! new dimensions or variables, in which case PIO_enddef() will return
          ! an error under harmless circumstances; so, don't return only for
          ! pre-existing files.
-         if (pio_ierr /= PIO_noerr .and. &
-             .not. (handle % external_file_desc .or. handle % preexisting_file)) then
+         if (pio_ierr /= PIO_noerr .and. (.not. handle % preexisting_file)) then
             if (present(ierr)) ierr = MPAS_IO_ERR_PIO
             return
          end if
@@ -2349,8 +2442,10 @@ module mpas_io
 
 #ifdef USE_PIO2
          call PIO_setframe(handle % pio_file, field_cursor % fieldhandle % field_desc, handle % frame_number)
+         IO_DEBUG_WRITE('PIO_setframe ($i)' COMMA intArgs=(/int(handle % frame_number)/))
 #else
          call PIO_setframe(field_cursor % fieldhandle % field_desc, handle % frame_number)
+         IO_DEBUG_WRITE('PIO_setframe ($i)' COMMA intArgs=(/int(handle % frame_number)/))
 #endif
          start1(1) = handle % frame_number
          count1(1) = 1
@@ -2369,38 +2464,48 @@ module mpas_io
             singleVal = real(realVal,R4KIND)
             if (field_cursor % fieldhandle % has_unlimited_dim) then
                pio_ierr = PIO_put_var(handle % pio_file, field_cursor % fieldhandle % field_desc, start1, singleVal)
+               IO_DEBUG_WRITE('PIO_put_var ('//trim(fieldname)//') returned $i' COMMA intArgs=(/pio_ierr/))
             else
                pio_ierr = PIO_put_var(handle % pio_file, field_cursor % fieldhandle % field_desc, singleVal)
+               IO_DEBUG_WRITE('PIO_put_var ('//trim(fieldname)//') returned $i' COMMA intArgs=(/pio_ierr/))
             end if
          else if ((field_cursor % fieldhandle % precision == MPAS_IO_DOUBLE_PRECISION) .and. &
              (MPAS_IO_NATIVE_PRECISION /= MPAS_IO_DOUBLE_PRECISION)) then
             doubleVal = real(realVal,R8KIND)
             if (field_cursor % fieldhandle % has_unlimited_dim) then
                pio_ierr = PIO_put_var(handle % pio_file, field_cursor % fieldhandle % field_desc, start1, doubleVal)
+               IO_DEBUG_WRITE('PIO_put_var ('//trim(fieldname)//') returned $i' COMMA intArgs=(/pio_ierr/))
             else
                pio_ierr = PIO_put_var(handle % pio_file, field_cursor % fieldhandle % field_desc, doubleVal)
+               IO_DEBUG_WRITE('PIO_put_var ('//trim(fieldname)//') returned $i' COMMA intArgs=(/pio_ierr/))
             end if
          else
             if (field_cursor % fieldhandle % has_unlimited_dim) then
                pio_ierr = PIO_put_var(handle % pio_file, field_cursor % fieldhandle % field_desc, start1, realVal)
+               IO_DEBUG_WRITE('PIO_put_var ('//trim(fieldname)//') returned $i' COMMA intArgs=(/pio_ierr/))
             else
                pio_ierr = PIO_put_var(handle % pio_file, field_cursor % fieldhandle % field_desc, realVal)
+               IO_DEBUG_WRITE('PIO_put_var ('//trim(fieldname)//') returned $i' COMMA intArgs=(/pio_ierr/))
             end if
          end if
       else if (present(intVal)) then
          if (field_cursor % fieldhandle % has_unlimited_dim) then
             pio_ierr = PIO_put_var(handle % pio_file, field_cursor % fieldhandle % field_desc, start1, intVal)
+            IO_DEBUG_WRITE('PIO_put_var ('//trim(fieldname)//') returned $i' COMMA intArgs=(/pio_ierr/))
          else
             pio_ierr = PIO_put_var(handle % pio_file, field_cursor % fieldhandle % field_desc, intVal)
+            IO_DEBUG_WRITE('PIO_put_var ('//trim(fieldname)//') returned $i' COMMA intArgs=(/pio_ierr/))
          end if
       else if (present(charVal)) then
          if (field_cursor % fieldhandle % has_unlimited_dim) then
             count2(1) = field_cursor % fieldhandle % dims(1) % dimsize
             pio_ierr = PIO_put_var(handle % pio_file, field_cursor % fieldhandle % field_desc, start2, charVal(1:count2(1)))
+            IO_DEBUG_WRITE('PIO_put_var ('//trim(fieldname)//') returned $i' COMMA intArgs=(/pio_ierr/))
          else
             start1(1) = 1
             count1(1) = field_cursor % fieldhandle % dims(1) % dimsize
             pio_ierr = PIO_put_var(handle % pio_file, field_cursor % fieldhandle % field_desc, start1, charVal(1:count1(1)))
+            IO_DEBUG_WRITE('PIO_put_var ('//trim(fieldname)//') returned $i' COMMA intArgs=(/pio_ierr/))
          end if
       else if (present(charArray1d)) then
          if (field_cursor % fieldhandle % has_unlimited_dim) then
@@ -2413,6 +2518,7 @@ module mpas_io
                count3(2) = 1
                count3(3) = 1
                pio_ierr = PIO_put_var(handle % pio_file, field_cursor % fieldhandle % field_desc, start3, charArray1d(i)(1:count3(1)))
+               IO_DEBUG_WRITE('PIO_put_var ('//trim(fieldname)//') returned $i' COMMA intArgs=(/pio_ierr/))
             end do
          else
             ! Write one string at a time because the sizes differ so much (i.e. StrLen != StrKIND)
@@ -2422,6 +2528,7 @@ module mpas_io
                count2(1) = field_cursor % fieldhandle % dims(1) % dimsize ! Should be StrLen
                count2(2) = 1
                pio_ierr = PIO_put_var(handle % pio_file, field_cursor % fieldhandle % field_desc, start2, charArray1d(i)(1:count2(1)))
+               IO_DEBUG_WRITE('PIO_put_var ('//trim(fieldname)//') returned $i' COMMA intArgs=(/pio_ierr/))
             end do
          end if
       else if (present(realArray1d)) then
@@ -2432,6 +2539,7 @@ module mpas_io
             if (associated(field_cursor % fieldhandle % decomp)) then
                call PIO_write_darray(handle % pio_file, field_cursor % fieldhandle % field_desc, field_cursor % fieldhandle % decomp % pio_iodesc, &
                                      singleArray1d, pio_ierr)
+               IO_DEBUG_WRITE('PIO_write_darray ('//trim(fieldname)//') returned $i' COMMA intArgs=(/pio_ierr/))
             else
                if (field_cursor % fieldhandle % has_unlimited_dim) then
                   start2(1) = 1
@@ -2439,10 +2547,12 @@ module mpas_io
                   count2(1) = field_cursor % fieldhandle % dims(1) % dimsize
                   count2(2) = 1
                   pio_ierr = PIO_put_var(handle % pio_file, field_cursor % fieldhandle % field_desc, start2, count2, singleArray1d)
+                  IO_DEBUG_WRITE('PIO_put_var ('//trim(fieldname)//') returned $i' COMMA intArgs=(/pio_ierr/))
                else
                   start1(1) = 1
                   count1(1) = field_cursor % fieldhandle % dims(1) % dimsize
                   pio_ierr = PIO_put_var(handle % pio_file, field_cursor % fieldhandle % field_desc, start1, count1, singleArray1d)
+                  IO_DEBUG_WRITE('PIO_put_var ('//trim(fieldname)//') returned $i' COMMA intArgs=(/pio_ierr/))
                end if
             end if
             deallocate(singleArray1d)
@@ -2453,6 +2563,7 @@ module mpas_io
             if (associated(field_cursor % fieldhandle % decomp)) then
                call PIO_write_darray(handle % pio_file, field_cursor % fieldhandle % field_desc, field_cursor % fieldhandle % decomp % pio_iodesc, &
                                      doubleArray1d, pio_ierr)
+               IO_DEBUG_WRITE('PIO_write_darray ('//trim(fieldname)//') returned $i' COMMA intArgs=(/pio_ierr/))
             else
                if (field_cursor % fieldhandle % has_unlimited_dim) then
                   start2(1) = 1
@@ -2460,10 +2571,12 @@ module mpas_io
                   count2(1) = field_cursor % fieldhandle % dims(1) % dimsize
                   count2(2) = 1
                   pio_ierr = PIO_put_var(handle % pio_file, field_cursor % fieldhandle % field_desc, start2, count2, doubleArray1d)
+                  IO_DEBUG_WRITE('PIO_put_var ('//trim(fieldname)//') returned $i' COMMA intArgs=(/pio_ierr/))
                else
                   start1(1) = 1
                   count1(1) = field_cursor % fieldhandle % dims(1) % dimsize
                   pio_ierr = PIO_put_var(handle % pio_file, field_cursor % fieldhandle % field_desc, start1, count1, doubleArray1d)
+                  IO_DEBUG_WRITE('PIO_put_var ('//trim(fieldname)//') returned $i' COMMA intArgs=(/pio_ierr/))
                end if
             end if
             deallocate(doubleArray1d)
@@ -2471,6 +2584,7 @@ module mpas_io
             if (associated(field_cursor % fieldhandle % decomp)) then
                call PIO_write_darray(handle % pio_file, field_cursor % fieldhandle % field_desc, field_cursor % fieldhandle % decomp % pio_iodesc, &
                                      realArray1d, pio_ierr)
+               IO_DEBUG_WRITE('PIO_write_darray ('//trim(fieldname)//') returned $i' COMMA intArgs=(/pio_ierr/))
             else
                if (field_cursor % fieldhandle % has_unlimited_dim) then
                   start2(1) = 1
@@ -2478,10 +2592,12 @@ module mpas_io
                   count2(1) = field_cursor % fieldhandle % dims(1) % dimsize
                   count2(2) = 1
                   pio_ierr = PIO_put_var(handle % pio_file, field_cursor % fieldhandle % field_desc, start2, count2, realArray1d)
+                  IO_DEBUG_WRITE('PIO_put_var ('//trim(fieldname)//') returned $i' COMMA intArgs=(/pio_ierr/))
                else
                   start1(1) = 1
                   count1(1) = field_cursor % fieldhandle % dims(1) % dimsize
                   pio_ierr = PIO_put_var(handle % pio_file, field_cursor % fieldhandle % field_desc, start1, count1, realArray1d)
+                  IO_DEBUG_WRITE('PIO_put_var ('//trim(fieldname)//') returned $i' COMMA intArgs=(/pio_ierr/))
                end if
             end if
          end if
@@ -2493,6 +2609,7 @@ module mpas_io
             if (associated(field_cursor % fieldhandle % decomp)) then
                call PIO_write_darray(handle % pio_file, field_cursor % fieldhandle % field_desc, field_cursor % fieldhandle % decomp % pio_iodesc, &
                                      singleArray2d, pio_ierr)
+               IO_DEBUG_WRITE('PIO_write_darray ('//trim(fieldname)//') returned $i' COMMA intArgs=(/pio_ierr/))
             else
                if (field_cursor % fieldhandle % has_unlimited_dim) then
                   start3(1) = 1
@@ -2502,11 +2619,13 @@ module mpas_io
                   count3(2) = field_cursor % fieldhandle % dims(2) % dimsize
                   count3(3) = 1
                   pio_ierr = PIO_put_var(handle % pio_file, field_cursor % fieldhandle % field_desc, start3, count3, singleArray2d)
+                  IO_DEBUG_WRITE('PIO_put_var ('//trim(fieldname)//') returned $i' COMMA intArgs=(/pio_ierr/))
                else
                   start2(:) = 1
                   count2(1) = field_cursor % fieldhandle % dims(1) % dimsize
                   count2(2) = field_cursor % fieldhandle % dims(2) % dimsize
                   pio_ierr = PIO_put_var(handle % pio_file, field_cursor % fieldhandle % field_desc, start2, count2, singleArray2d)
+                  IO_DEBUG_WRITE('PIO_put_var ('//trim(fieldname)//') returned $i' COMMA intArgs=(/pio_ierr/))
                end if
             end if
             deallocate(singleArray2d)
@@ -2517,6 +2636,7 @@ module mpas_io
             if (associated(field_cursor % fieldhandle % decomp)) then
                call PIO_write_darray(handle % pio_file, field_cursor % fieldhandle % field_desc, field_cursor % fieldhandle % decomp % pio_iodesc, &
                                      doubleArray2d, pio_ierr)
+               IO_DEBUG_WRITE('PIO_write_darray ('//trim(fieldname)//') returned $i' COMMA intArgs=(/pio_ierr/))
             else
                if (field_cursor % fieldhandle % has_unlimited_dim) then
                   start3(1) = 1
@@ -2526,11 +2646,13 @@ module mpas_io
                   count3(2) = field_cursor % fieldhandle % dims(2) % dimsize
                   count3(3) = 1
                   pio_ierr = PIO_put_var(handle % pio_file, field_cursor % fieldhandle % field_desc, start3, count3, doubleArray2d)
+                  IO_DEBUG_WRITE('PIO_put_var ('//trim(fieldname)//') returned $i' COMMA intArgs=(/pio_ierr/))
                else
                   start2(:) = 1
                   count2(1) = field_cursor % fieldhandle % dims(1) % dimsize
                   count2(2) = field_cursor % fieldhandle % dims(2) % dimsize
                   pio_ierr = PIO_put_var(handle % pio_file, field_cursor % fieldhandle % field_desc, start2, count2, doubleArray2d)
+                  IO_DEBUG_WRITE('PIO_put_var ('//trim(fieldname)//') returned $i' COMMA intArgs=(/pio_ierr/))
                end if
             end if
             deallocate(doubleArray2d)
@@ -2538,6 +2660,7 @@ module mpas_io
             if (associated(field_cursor % fieldhandle % decomp)) then
                call PIO_write_darray(handle % pio_file, field_cursor % fieldhandle % field_desc, field_cursor % fieldhandle % decomp % pio_iodesc, &
                                      realArray2d, pio_ierr)
+               IO_DEBUG_WRITE('PIO_write_darray ('//trim(fieldname)//') returned $i' COMMA intArgs=(/pio_ierr/))
             else
                if (field_cursor % fieldhandle % has_unlimited_dim) then
                   start3(1) = 1
@@ -2547,11 +2670,13 @@ module mpas_io
                   count3(2) = field_cursor % fieldhandle % dims(2) % dimsize
                   count3(3) = 1
                   pio_ierr = PIO_put_var(handle % pio_file, field_cursor % fieldhandle % field_desc, start3, count3, realArray2d)
+                  IO_DEBUG_WRITE('PIO_put_var ('//trim(fieldname)//') returned $i' COMMA intArgs=(/pio_ierr/))
                else
                   start2(:) = 1
                   count2(1) = field_cursor % fieldhandle % dims(1) % dimsize
                   count2(2) = field_cursor % fieldhandle % dims(2) % dimsize
                   pio_ierr = PIO_put_var(handle % pio_file, field_cursor % fieldhandle % field_desc, start2, count2, realArray2d)
+                  IO_DEBUG_WRITE('PIO_put_var ('//trim(fieldname)//') returned $i' COMMA intArgs=(/pio_ierr/))
                end if
             end if
          end if
@@ -2563,6 +2688,7 @@ module mpas_io
             if (associated(field_cursor % fieldhandle % decomp)) then
                call PIO_write_darray(handle % pio_file, field_cursor % fieldhandle % field_desc, field_cursor % fieldhandle % decomp % pio_iodesc, &
                                      singleArray3d, pio_ierr)
+               IO_DEBUG_WRITE('PIO_write_darray ('//trim(fieldname)//') returned $i' COMMA intArgs=(/pio_ierr/))
             else
                if (field_cursor % fieldhandle % has_unlimited_dim) then
                   start4(1) = 1
@@ -2574,12 +2700,14 @@ module mpas_io
                   count4(3) = field_cursor % fieldhandle % dims(3) % dimsize
                   count4(4) = 1
                   pio_ierr = PIO_put_var(handle % pio_file, field_cursor % fieldhandle % field_desc, start4, count4, singleArray3d)
+                  IO_DEBUG_WRITE('PIO_put_var ('//trim(fieldname)//') returned $i' COMMA intArgs=(/pio_ierr/))
                else
                   start3(:) = 1
                   count3(1) = field_cursor % fieldhandle % dims(1) % dimsize
                   count3(2) = field_cursor % fieldhandle % dims(2) % dimsize
                   count3(3) = field_cursor % fieldhandle % dims(3) % dimsize
                   pio_ierr = PIO_put_var(handle % pio_file, field_cursor % fieldhandle % field_desc, start3, count3, singleArray3d)
+                  IO_DEBUG_WRITE('PIO_put_var ('//trim(fieldname)//') returned $i' COMMA intArgs=(/pio_ierr/))
                end if
             end if
             deallocate(singleArray3d)
@@ -2590,6 +2718,7 @@ module mpas_io
             if (associated(field_cursor % fieldhandle % decomp)) then
                call PIO_write_darray(handle % pio_file, field_cursor % fieldhandle % field_desc, field_cursor % fieldhandle % decomp % pio_iodesc, &
                                      doubleArray3d, pio_ierr)
+               IO_DEBUG_WRITE('PIO_write_darray ('//trim(fieldname)//') returned $i' COMMA intArgs=(/pio_ierr/))
             else
                if (field_cursor % fieldhandle % has_unlimited_dim) then
                   start4(1) = 1
@@ -2601,12 +2730,14 @@ module mpas_io
                   count4(3) = field_cursor % fieldhandle % dims(3) % dimsize
                   count4(4) = 1
                   pio_ierr = PIO_put_var(handle % pio_file, field_cursor % fieldhandle % field_desc, start4, count4, doubleArray3d)
+                  IO_DEBUG_WRITE('PIO_put_var ('//trim(fieldname)//') returned $i' COMMA intArgs=(/pio_ierr/))
                else
                   start3(:) = 1
                   count3(1) = field_cursor % fieldhandle % dims(1) % dimsize
                   count3(2) = field_cursor % fieldhandle % dims(2) % dimsize
                   count3(3) = field_cursor % fieldhandle % dims(3) % dimsize
                   pio_ierr = PIO_put_var(handle % pio_file, field_cursor % fieldhandle % field_desc, start3, count3, doubleArray3d)
+                  IO_DEBUG_WRITE('PIO_put_var ('//trim(fieldname)//') returned $i' COMMA intArgs=(/pio_ierr/))
                end if
             end if
             deallocate(doubleArray3d)
@@ -2614,6 +2745,7 @@ module mpas_io
             if (associated(field_cursor % fieldhandle % decomp)) then
                call PIO_write_darray(handle % pio_file, field_cursor % fieldhandle % field_desc, field_cursor % fieldhandle % decomp % pio_iodesc, &
                                      realArray3d, pio_ierr)
+               IO_DEBUG_WRITE('PIO_write_darray ('//trim(fieldname)//') returned $i' COMMA intArgs=(/pio_ierr/))
             else
                if (field_cursor % fieldhandle % has_unlimited_dim) then
                   start4(1) = 1
@@ -2625,12 +2757,14 @@ module mpas_io
                   count4(3) = field_cursor % fieldhandle % dims(3) % dimsize
                   count4(4) = 1
                   pio_ierr = PIO_put_var(handle % pio_file, field_cursor % fieldhandle % field_desc, start4, count4, realArray3d)
+                  IO_DEBUG_WRITE('PIO_put_var ('//trim(fieldname)//') returned $i' COMMA intArgs=(/pio_ierr/))
                else
                   start3(:) = 1
                   count3(1) = field_cursor % fieldhandle % dims(1) % dimsize
                   count3(2) = field_cursor % fieldhandle % dims(2) % dimsize
                   count3(3) = field_cursor % fieldhandle % dims(3) % dimsize
                   pio_ierr = PIO_put_var(handle % pio_file, field_cursor % fieldhandle % field_desc, start3, count3, realArray3d)
+                  IO_DEBUG_WRITE('PIO_put_var ('//trim(fieldname)//') returned $i' COMMA intArgs=(/pio_ierr/))
                end if
             end if
          end if
@@ -2642,6 +2776,7 @@ module mpas_io
             if (associated(field_cursor % fieldhandle % decomp)) then
                call PIO_write_darray(handle % pio_file, field_cursor % fieldhandle % field_desc, field_cursor % fieldhandle % decomp % pio_iodesc, &
                                      singleArray4d, pio_ierr)
+               IO_DEBUG_WRITE('PIO_write_darray ('//trim(fieldname)//') returned $i' COMMA intArgs=(/pio_ierr/))
             else
                if (field_cursor % fieldhandle % has_unlimited_dim) then
                   start5(1) = 1
@@ -2655,6 +2790,7 @@ module mpas_io
                   count5(4) = field_cursor % fieldhandle % dims(4) % dimsize
                   count5(5) = 1
                   pio_ierr = PIO_put_var(handle % pio_file, field_cursor % fieldhandle % field_desc, start5, count5, singleArray4d)
+                  IO_DEBUG_WRITE('PIO_put_var ('//trim(fieldname)//') returned $i' COMMA intArgs=(/pio_ierr/))
                else
                   start4(:) = 1
                   count4(1) = field_cursor % fieldhandle % dims(1) % dimsize
@@ -2662,6 +2798,7 @@ module mpas_io
                   count4(3) = field_cursor % fieldhandle % dims(3) % dimsize
                   count4(4) = field_cursor % fieldhandle % dims(4) % dimsize
                   pio_ierr = PIO_put_var(handle % pio_file, field_cursor % fieldhandle % field_desc, start4, count4, singleArray4d)
+                  IO_DEBUG_WRITE('PIO_put_var ('//trim(fieldname)//') returned $i' COMMA intArgs=(/pio_ierr/))
                end if
             end if
             deallocate(singleArray4d)
@@ -2672,6 +2809,7 @@ module mpas_io
             if (associated(field_cursor % fieldhandle % decomp)) then
                call PIO_write_darray(handle % pio_file, field_cursor % fieldhandle % field_desc, field_cursor % fieldhandle % decomp % pio_iodesc, &
                                      doubleArray4d, pio_ierr)
+               IO_DEBUG_WRITE('PIO_write_darray ('//trim(fieldname)//') returned $i' COMMA intArgs=(/pio_ierr/))
             else
                if (field_cursor % fieldhandle % has_unlimited_dim) then
                   start5(1) = 1
@@ -2685,6 +2823,7 @@ module mpas_io
                   count5(4) = field_cursor % fieldhandle % dims(4) % dimsize
                   count5(5) = 1
                   pio_ierr = PIO_put_var(handle % pio_file, field_cursor % fieldhandle % field_desc, start5, count5, doubleArray4d)
+                  IO_DEBUG_WRITE('PIO_put_var ('//trim(fieldname)//') returned $i' COMMA intArgs=(/pio_ierr/))
                else
                   start4(:) = 1
                   count4(1) = field_cursor % fieldhandle % dims(1) % dimsize
@@ -2692,6 +2831,7 @@ module mpas_io
                   count4(3) = field_cursor % fieldhandle % dims(3) % dimsize
                   count4(4) = field_cursor % fieldhandle % dims(4) % dimsize
                   pio_ierr = PIO_put_var(handle % pio_file, field_cursor % fieldhandle % field_desc, start4, count4, doubleArray4d)
+                  IO_DEBUG_WRITE('PIO_put_var ('//trim(fieldname)//') returned $i' COMMA intArgs=(/pio_ierr/))
                end if
             end if
             deallocate(doubleArray4d)
@@ -2699,6 +2839,7 @@ module mpas_io
             if (associated(field_cursor % fieldhandle % decomp)) then
                call PIO_write_darray(handle % pio_file, field_cursor % fieldhandle % field_desc, field_cursor % fieldhandle % decomp % pio_iodesc, &
                                      realArray4d, pio_ierr)
+               IO_DEBUG_WRITE('PIO_write_darray ('//trim(fieldname)//') returned $i' COMMA intArgs=(/pio_ierr/))
             else
                if (field_cursor % fieldhandle % has_unlimited_dim) then
                   start5(1) = 1
@@ -2712,6 +2853,7 @@ module mpas_io
                   count5(4) = field_cursor % fieldhandle % dims(4) % dimsize
                   count5(5) = 1
                   pio_ierr = PIO_put_var(handle % pio_file, field_cursor % fieldhandle % field_desc, start5, count5, realArray4d)
+                  IO_DEBUG_WRITE('PIO_put_var ('//trim(fieldname)//') returned $i' COMMA intArgs=(/pio_ierr/))
                else
                   start4(:) = 1
                   count4(1) = field_cursor % fieldhandle % dims(1) % dimsize
@@ -2719,6 +2861,7 @@ module mpas_io
                   count4(3) = field_cursor % fieldhandle % dims(3) % dimsize
                   count4(4) = field_cursor % fieldhandle % dims(4) % dimsize
                   pio_ierr = PIO_put_var(handle % pio_file, field_cursor % fieldhandle % field_desc, start4, count4, realArray4d)
+                  IO_DEBUG_WRITE('PIO_put_var ('//trim(fieldname)//') returned $i' COMMA intArgs=(/pio_ierr/))
                end if
             end if
          end if
@@ -2730,6 +2873,7 @@ module mpas_io
             if (associated(field_cursor % fieldhandle % decomp)) then
                call PIO_write_darray(handle % pio_file, field_cursor % fieldhandle % field_desc, field_cursor % fieldhandle % decomp % pio_iodesc, &
                                      singleArray5d, pio_ierr)
+               IO_DEBUG_WRITE('PIO_write_darray ('//trim(fieldname)//') returned $i' COMMA intArgs=(/pio_ierr/))
             else
                if (field_cursor % fieldhandle % has_unlimited_dim) then
                   start6(1) = 1
@@ -2745,6 +2889,7 @@ module mpas_io
                   count6(5) = field_cursor % fieldhandle % dims(5) % dimsize
                   count6(6) = 1
                   pio_ierr = PIO_put_var(handle % pio_file, field_cursor % fieldhandle % field_desc, start6, count6, singleArray5d)
+                  IO_DEBUG_WRITE('PIO_put_var ('//trim(fieldname)//') returned $i' COMMA intArgs=(/pio_ierr/))
                else
                   start5(:) = 1
                   count5(1) = field_cursor % fieldhandle % dims(1) % dimsize
@@ -2753,6 +2898,7 @@ module mpas_io
                   count5(4) = field_cursor % fieldhandle % dims(4) % dimsize
                   count5(5) = field_cursor % fieldhandle % dims(5) % dimsize
                   pio_ierr = PIO_put_var(handle % pio_file, field_cursor % fieldhandle % field_desc, start5, count5, singleArray5d)
+                  IO_DEBUG_WRITE('PIO_put_var ('//trim(fieldname)//') returned $i' COMMA intArgs=(/pio_ierr/))
                end if
             end if
             deallocate(singleArray5d)
@@ -2763,6 +2909,7 @@ module mpas_io
             if (associated(field_cursor % fieldhandle % decomp)) then
                call PIO_write_darray(handle % pio_file, field_cursor % fieldhandle % field_desc, field_cursor % fieldhandle % decomp % pio_iodesc, &
                                      doubleArray5d, pio_ierr)
+               IO_DEBUG_WRITE('PIO_write_darray ('//trim(fieldname)//') returned $i' COMMA intArgs=(/pio_ierr/))
             else
                if (field_cursor % fieldhandle % has_unlimited_dim) then
                   start6(1) = 1
@@ -2778,6 +2925,7 @@ module mpas_io
                   count6(5) = field_cursor % fieldhandle % dims(5) % dimsize
                   count6(6) = 1
                   pio_ierr = PIO_put_var(handle % pio_file, field_cursor % fieldhandle % field_desc, start6, count6, doubleArray5d)
+                  IO_DEBUG_WRITE('PIO_put_var ('//trim(fieldname)//') returned $i' COMMA intArgs=(/pio_ierr/))
                else
                   start5(:) = 1
                   count5(1) = field_cursor % fieldhandle % dims(1) % dimsize
@@ -2786,6 +2934,7 @@ module mpas_io
                   count5(4) = field_cursor % fieldhandle % dims(4) % dimsize
                   count5(5) = field_cursor % fieldhandle % dims(5) % dimsize
                   pio_ierr = PIO_put_var(handle % pio_file, field_cursor % fieldhandle % field_desc, start5, count5, doubleArray5d)
+                  IO_DEBUG_WRITE('PIO_put_var ('//trim(fieldname)//') returned $i' COMMA intArgs=(/pio_ierr/))
                end if
             end if
             deallocate(doubleArray5d)
@@ -2793,6 +2942,7 @@ module mpas_io
             if (associated(field_cursor % fieldhandle % decomp)) then
                call PIO_write_darray(handle % pio_file, field_cursor % fieldhandle % field_desc, field_cursor % fieldhandle % decomp % pio_iodesc, &
                                      realArray5d, pio_ierr)
+               IO_DEBUG_WRITE('PIO_write_darray ('//trim(fieldname)//') returned $i' COMMA intArgs=(/pio_ierr/))
             else
                if (field_cursor % fieldhandle % has_unlimited_dim) then
                   start6(1) = 1
@@ -2808,6 +2958,7 @@ module mpas_io
                   count6(5) = field_cursor % fieldhandle % dims(5) % dimsize
                   count6(6) = 1
                   pio_ierr = PIO_put_var(handle % pio_file, field_cursor % fieldhandle % field_desc, start6, count6, realArray5d)
+                  IO_DEBUG_WRITE('PIO_put_var ('//trim(fieldname)//') returned $i' COMMA intArgs=(/pio_ierr/))
                else
                   start5(:) = 1
                   count5(1) = field_cursor % fieldhandle % dims(1) % dimsize
@@ -2816,6 +2967,7 @@ module mpas_io
                   count5(4) = field_cursor % fieldhandle % dims(4) % dimsize
                   count5(5) = field_cursor % fieldhandle % dims(5) % dimsize
                   pio_ierr = PIO_put_var(handle % pio_file, field_cursor % fieldhandle % field_desc, start5, count5, realArray5d)
+                  IO_DEBUG_WRITE('PIO_put_var ('//trim(fieldname)//') returned $i' COMMA intArgs=(/pio_ierr/))
                end if
             end if
          end if
@@ -2823,6 +2975,7 @@ module mpas_io
          if (associated(field_cursor % fieldhandle % decomp)) then
             call PIO_write_darray(handle % pio_file, field_cursor % fieldhandle % field_desc, field_cursor % fieldhandle % decomp % pio_iodesc, &
                                   intArray1d, pio_ierr)
+            IO_DEBUG_WRITE('PIO_write_darray ('//trim(fieldname)//') returned $i' COMMA intArgs=(/pio_ierr/))
          else
             if (field_cursor % fieldhandle % has_unlimited_dim) then
                start2(1) = 1
@@ -2830,16 +2983,19 @@ module mpas_io
                count2(1) = field_cursor % fieldhandle % dims(1) % dimsize
                count2(2) = 1
                pio_ierr = PIO_put_var(handle % pio_file, field_cursor % fieldhandle % field_desc, start2, count2, intArray1d)
+               IO_DEBUG_WRITE('PIO_put_var ('//trim(fieldname)//') returned $i' COMMA intArgs=(/pio_ierr/))
             else
                start1(1) = 1
                count1(1) = field_cursor % fieldhandle % dims(1) % dimsize
                pio_ierr = PIO_put_var(handle % pio_file, field_cursor % fieldhandle % field_desc, start1, count1, intArray1d)
+               IO_DEBUG_WRITE('PIO_put_var ('//trim(fieldname)//') returned $i' COMMA intArgs=(/pio_ierr/))
             end if
          end if
       else if (present(intArray2d)) then
          if (associated(field_cursor % fieldhandle % decomp)) then
             call PIO_write_darray(handle % pio_file, field_cursor % fieldhandle % field_desc, field_cursor % fieldhandle % decomp % pio_iodesc, &
                                   intArray2d, pio_ierr)
+            IO_DEBUG_WRITE('PIO_write_darray ('//trim(fieldname)//') returned $i' COMMA intArgs=(/pio_ierr/))
          else
             if (field_cursor % fieldhandle % has_unlimited_dim) then
                start3(1) = 1
@@ -2849,17 +3005,20 @@ module mpas_io
                count3(2) = field_cursor % fieldhandle % dims(2) % dimsize
                count3(3) = 1
                pio_ierr = PIO_put_var(handle % pio_file, field_cursor % fieldhandle % field_desc, start3, count3, intArray2d)
+               IO_DEBUG_WRITE('PIO_put_var ('//trim(fieldname)//') returned $i' COMMA intArgs=(/pio_ierr/))
             else
                start2(:) = 1
                count2(1) = field_cursor % fieldhandle % dims(1) % dimsize
                count2(2) = field_cursor % fieldhandle % dims(2) % dimsize
                pio_ierr = PIO_put_var(handle % pio_file, field_cursor % fieldhandle % field_desc, start2, count2, intArray2d)
+               IO_DEBUG_WRITE('PIO_put_var ('//trim(fieldname)//') returned $i' COMMA intArgs=(/pio_ierr/))
             end if
          end if
       else if (present(intArray3d)) then
          if (associated(field_cursor % fieldhandle % decomp)) then
             call PIO_write_darray(handle % pio_file, field_cursor % fieldhandle % field_desc, field_cursor % fieldhandle % decomp % pio_iodesc, &
                                   intArray3d, pio_ierr)
+            IO_DEBUG_WRITE('PIO_write_darray ('//trim(fieldname)//') returned $i' COMMA intArgs=(/pio_ierr/))
          else
             if (field_cursor % fieldhandle % has_unlimited_dim) then
                start4(1) = 1
@@ -2871,18 +3030,21 @@ module mpas_io
                count4(3) = field_cursor % fieldhandle % dims(3) % dimsize
                count4(4) = 1
                pio_ierr = PIO_put_var(handle % pio_file, field_cursor % fieldhandle % field_desc, start4, count4, intArray3d)
+               IO_DEBUG_WRITE('PIO_put_var ('//trim(fieldname)//') returned $i' COMMA intArgs=(/pio_ierr/))
             else
                start3(:) = 1
                count3(1) = field_cursor % fieldhandle % dims(1) % dimsize
                count3(2) = field_cursor % fieldhandle % dims(2) % dimsize
                count3(3) = field_cursor % fieldhandle % dims(3) % dimsize
                pio_ierr = PIO_put_var(handle % pio_file, field_cursor % fieldhandle % field_desc, start3, count3, intArray3d)
+               IO_DEBUG_WRITE('PIO_put_var ('//trim(fieldname)//') returned $i' COMMA intArgs=(/pio_ierr/))
             end if
          end if
       else if (present(intArray4d)) then
          if (associated(field_cursor % fieldhandle % decomp)) then
             call PIO_write_darray(handle % pio_file, field_cursor % fieldhandle % field_desc, field_cursor % fieldhandle % decomp % pio_iodesc, &
                                   intArray4d, pio_ierr)
+            IO_DEBUG_WRITE('PIO_write_darray ('//trim(fieldname)//') returned $i' COMMA intArgs=(/pio_ierr/))
          else
             if (field_cursor % fieldhandle % has_unlimited_dim) then
                start5(1) = 1
@@ -2896,6 +3058,7 @@ module mpas_io
                count5(4) = field_cursor % fieldhandle % dims(4) % dimsize
                count5(5) = 1
                pio_ierr = PIO_put_var(handle % pio_file, field_cursor % fieldhandle % field_desc, start5, count5, intArray4d)
+               IO_DEBUG_WRITE('PIO_put_var ('//trim(fieldname)//') returned $i' COMMA intArgs=(/pio_ierr/))
             else
                start4(:) = 1
                count4(1) = field_cursor % fieldhandle % dims(1) % dimsize
@@ -2903,6 +3066,7 @@ module mpas_io
                count4(3) = field_cursor % fieldhandle % dims(3) % dimsize
                count4(4) = field_cursor % fieldhandle % dims(4) % dimsize
                pio_ierr = PIO_put_var(handle % pio_file, field_cursor % fieldhandle % field_desc, start4, count4, intArray4d)
+               IO_DEBUG_WRITE('PIO_put_var ('//trim(fieldname)//') returned $i' COMMA intArgs=(/pio_ierr/))
             end if
          end if
       end if
@@ -3220,6 +3384,7 @@ module mpas_io
 
       ! Query attribute value
       pio_ierr = PIO_inq_att(handle % pio_file, varid, attName, xtype, len)
+      IO_DEBUG_WRITE('PIO_inq_att ('//trim(attName)//') returned $i' COMMA intArgs=(/pio_ierr/))
       if (pio_ierr /= PIO_noerr) then
          if (present(ierr)) ierr = MPAS_IO_ERR_PIO
          return
@@ -3230,6 +3395,7 @@ module mpas_io
       end if
 
       pio_ierr = PIO_get_att(handle % pio_file, varid, attName, attValue)
+      IO_DEBUG_WRITE('PIO_get_att ('//trim(attName)//') returned $i' COMMA intArgs=(/pio_ierr/))
       if (pio_ierr /= PIO_noerr) then
          if (present(ierr)) ierr = MPAS_IO_ERR_PIO
          return
@@ -3361,6 +3527,7 @@ module mpas_io
 
       ! Query attribute value
       pio_ierr = PIO_inq_att(handle % pio_file, varid, attName, xtype, len)
+      IO_DEBUG_WRITE('PIO_inq_att ('//trim(attName)//') returned $i' COMMA intArgs=(/pio_ierr/))
       if (pio_ierr /= PIO_noerr) then
          if (present(ierr)) ierr = MPAS_IO_ERR_PIO
          return
@@ -3372,6 +3539,7 @@ module mpas_io
       end if
 
       pio_ierr = PIO_inq_attlen(handle % pio_file, varid, attName, attlen)
+      IO_DEBUG_WRITE('PIO_inq_attlen ('//trim(attName)//') returned $i' COMMA intArgs=(/pio_ierr/))
       if (pio_ierr /= PIO_noerr) then
          if (present(ierr)) ierr = MPAS_IO_ERR_PIO
          return
@@ -3379,6 +3547,7 @@ module mpas_io
 
       allocate(attValue(attlen))
       pio_ierr = PIO_get_att(handle % pio_file, varid, attName, attValue)
+      IO_DEBUG_WRITE('PIO_get_att ('//trim(attName)//') returned $i' COMMA intArgs=(/pio_ierr/))
       if (pio_ierr /= PIO_noerr) then
          if (present(ierr)) ierr = MPAS_IO_ERR_PIO
          return
@@ -3519,6 +3688,7 @@ module mpas_io
 
       ! Query attribute value
       pio_ierr = PIO_inq_att(handle % pio_file, varid, attName, xtype, len)
+      IO_DEBUG_WRITE('PIO_inq_att ('//trim(attName)//') returned $i' COMMA intArgs=(/pio_ierr/))
       if (pio_ierr /= PIO_noerr) then
          if (present(ierr)) ierr = MPAS_IO_ERR_PIO
          return
@@ -3532,6 +3702,7 @@ module mpas_io
             return
          end if
          pio_ierr = PIO_get_att(handle % pio_file, varid, attName, singleVal)
+         IO_DEBUG_WRITE('PIO_get_att ('//trim(attName)//') returned $i' COMMA intArgs=(/pio_ierr/))
          attValue = real(singleVal,RKIND)
 
       else if ((local_precision == MPAS_IO_DOUBLE_PRECISION) .and. &
@@ -3542,6 +3713,7 @@ module mpas_io
             return
          end if
          pio_ierr = PIO_get_att(handle % pio_file, varid, attName, doubleVal)
+         IO_DEBUG_WRITE('PIO_get_att ('//trim(attName)//') returned $i' COMMA intArgs=(/pio_ierr/))
          attValue = real(doubleVal,RKIND)
 
       else
@@ -3551,6 +3723,7 @@ module mpas_io
             return
          end if
          pio_ierr = PIO_get_att(handle % pio_file, varid, attName, attValue)
+         IO_DEBUG_WRITE('PIO_get_att ('//trim(attName)//') returned $i' COMMA intArgs=(/pio_ierr/))
 
       end if
       if (pio_ierr /= PIO_noerr) then
@@ -3695,12 +3868,14 @@ module mpas_io
 
       ! Query attribute value
       pio_ierr = PIO_inq_att(handle % pio_file, varid, attName, xtype, len)
+      IO_DEBUG_WRITE('PIO_inq_att ('//trim(attName)//') returned $i' COMMA intArgs=(/pio_ierr/))
       if (pio_ierr /= PIO_noerr) then
          if (present(ierr)) ierr = MPAS_IO_ERR_PIO
          return
       end if
 
       pio_ierr = PIO_inq_attlen(handle % pio_file, varid, attName, attlen)
+      IO_DEBUG_WRITE('PIO_inq_attlen ('//trim(attName)//') returned $i' COMMA intArgs=(/pio_ierr/))
       if (pio_ierr /= PIO_noerr) then
          if (present(ierr)) ierr = MPAS_IO_ERR_PIO
          return
@@ -3716,6 +3891,7 @@ module mpas_io
          allocate(attValue(attlen))
          allocate(singleVal(attlen))
          pio_ierr = PIO_get_att(handle % pio_file, varid, attName, singleVal)
+         IO_DEBUG_WRITE('PIO_get_att ('//trim(attName)//') returned $i' COMMA intArgs=(/pio_ierr/))
          attValue(:) = real(singleVal(:),RKIND)
          deallocate(singleVal)
 
@@ -3729,6 +3905,7 @@ module mpas_io
          allocate(attValue(attlen))
          allocate(doubleVal(attlen))
          pio_ierr = PIO_get_att(handle % pio_file, varid, attName, doubleVal)
+         IO_DEBUG_WRITE('PIO_get_att ('//trim(attName)//') returned $i' COMMA intArgs=(/pio_ierr/))
          attValue(:) = real(doubleVal(:),RKIND)
          deallocate(doubleVal)
 
@@ -3740,6 +3917,7 @@ module mpas_io
          end if
          allocate(attValue(attlen))
          pio_ierr = PIO_get_att(handle % pio_file, varid, attName, attValue)
+         IO_DEBUG_WRITE('PIO_get_att ('//trim(attName)//') returned $i' COMMA intArgs=(/pio_ierr/))
 
       end if
       if (pio_ierr /= PIO_noerr) then
@@ -3873,6 +4051,7 @@ module mpas_io
 
       ! Query attribute value
       pio_ierr = PIO_inq_att(handle % pio_file, varid, attName, xtype, len)
+      IO_DEBUG_WRITE('PIO_inq_att ('//trim(attName)//') returned $i' COMMA intArgs=(/pio_ierr/))
       if (pio_ierr /= PIO_noerr) then
          if (present(ierr)) ierr = MPAS_IO_ERR_PIO
          return
@@ -3883,6 +4062,7 @@ module mpas_io
       end if
 
       pio_ierr = PIO_get_att(handle % pio_file, varid, attName, attValue)
+      IO_DEBUG_WRITE('PIO_get_att ('//trim(attName)//') returned $i' COMMA intArgs=(/pio_ierr/))
       if (pio_ierr /= PIO_noerr) then
          if (present(ierr)) ierr = MPAS_IO_ERR_PIO
          return
@@ -4064,6 +4244,7 @@ module mpas_io
       end if
 
       pio_ierr = PIO_put_att(handle % pio_file, varid, attName, attValueLocal) 
+      IO_DEBUG_WRITE('PIO_put_att ('//trim(attName)//') returned $i' COMMA intArgs=(/pio_ierr/))
       if (pio_ierr /= PIO_noerr) then
          if (present(ierr)) ierr = MPAS_IO_ERR_PIO
          return
@@ -4221,6 +4402,7 @@ module mpas_io
       end if
 
       pio_ierr = PIO_put_att(handle % pio_file, varid, attName, attValueLocal) 
+      IO_DEBUG_WRITE('PIO_put_att ('//trim(attName)//') returned $i' COMMA intArgs=(/pio_ierr/))
       if (pio_ierr /= PIO_noerr) then
          if (present(ierr)) ierr = MPAS_IO_ERR_PIO
          return
@@ -4381,12 +4563,15 @@ module mpas_io
           (MPAS_IO_NATIVE_PRECISION /= MPAS_IO_SINGLE_PRECISION)) then
          singleVal = real(attValueLocal,R4KIND)
          pio_ierr = PIO_put_att(handle % pio_file, varid, attName, singleVal) 
+         IO_DEBUG_WRITE('PIO_put_att ('//trim(attName)//') returned $i' COMMA intArgs=(/pio_ierr/))
       else if ((new_attlist_node % attHandle % precision == MPAS_IO_DOUBLE_PRECISION) .and. &
           (MPAS_IO_NATIVE_PRECISION /= MPAS_IO_DOUBLE_PRECISION)) then
          doubleVal = real(attValueLocal,R8KIND)
          pio_ierr = PIO_put_att(handle % pio_file, varid, attName, doubleVal) 
+         IO_DEBUG_WRITE('PIO_put_att ('//trim(attName)//') returned $i' COMMA intArgs=(/pio_ierr/))
       else
          pio_ierr = PIO_put_att(handle % pio_file, varid, attName, attValueLocal) 
+         IO_DEBUG_WRITE('PIO_put_att ('//trim(attName)//') returned $i' COMMA intArgs=(/pio_ierr/))
       end if
 
       if (pio_ierr /= PIO_noerr) then
@@ -4559,15 +4744,18 @@ module mpas_io
          allocate(singleVal(size(attValueLocal)))
          singleVal(:) = real(attValueLocal(:),R4KIND)
          pio_ierr = PIO_put_att(handle % pio_file, varid, attName, singleVal) 
+         IO_DEBUG_WRITE('PIO_put_att ('//trim(attName)//') returned $i' COMMA intArgs=(/pio_ierr/))
          deallocate(singleVal)
       else if ((new_attlist_node % attHandle % precision == MPAS_IO_DOUBLE_PRECISION) .and. &
           (MPAS_IO_NATIVE_PRECISION /= MPAS_IO_DOUBLE_PRECISION)) then
          allocate(doubleVal(size(attValueLocal)))
          doubleVal(:) = real(attValueLocal(:),R8KIND)
          pio_ierr = PIO_put_att(handle % pio_file, varid, attName, doubleVal) 
+         IO_DEBUG_WRITE('PIO_put_att ('//trim(attName)//') returned $i' COMMA intArgs=(/pio_ierr/))
          deallocate(doubleVal)
       else
          pio_ierr = PIO_put_att(handle % pio_file, varid, attName, attValueLocal) 
+         IO_DEBUG_WRITE('PIO_put_att ('//trim(attName)//') returned $i' COMMA intArgs=(/pio_ierr/))
       end if
       if (pio_ierr /= PIO_noerr) then
          if (present(ierr)) ierr = MPAS_IO_ERR_PIO
@@ -4728,6 +4916,7 @@ module mpas_io
       end if
 
       pio_ierr = PIO_put_att(handle % pio_file, varid, attName, trim(attValueLocal)) 
+      IO_DEBUG_WRITE('PIO_put_att ('//trim(attName)//') returned $i' COMMA intArgs=(/pio_ierr/))
       if (pio_ierr /= PIO_noerr) then
 
          if (present(ierr)) ierr = MPAS_IO_ERR_PIO
@@ -4740,16 +4929,19 @@ module mpas_io
          !
          if (handle % preexisting_file .and. .not. handle % data_mode) then
             pio_ierr = PIO_redef(handle % pio_file)
+            IO_DEBUG_WRITE('PIO_redef ('//trim(attName)//') returned $i' COMMA intArgs=(/pio_ierr/))
             if (pio_ierr /= PIO_noerr) then
                return
             end if
 
             pio_ierr = PIO_put_att(handle % pio_file, varid, attName, trim(attValueLocal)) 
+            IO_DEBUG_WRITE('PIO_put_att ('//trim(attName)//') returned $i' COMMA intArgs=(/pio_ierr/))
             if (pio_ierr /= PIO_noerr) then
                return
             end if
 
             pio_ierr = PIO_enddef(handle % pio_file)
+            IO_DEBUG_WRITE('PIO_enddef ('//trim(attName)//') returned $i' COMMA intArgs=(/pio_ierr/))
             if (pio_ierr /= PIO_noerr) then
                return
             end if
@@ -4813,7 +5005,9 @@ module mpas_io
          return 
       end if
 
+      IO_DEBUG_WRITE('Going to call PIO_syncfile')
       call PIO_syncfile(handle % pio_file)
+      IO_DEBUG_WRITE('Returned from to call PIO_syncfile')
 
    end subroutine MPAS_io_sync
 
@@ -4886,7 +5080,9 @@ module mpas_io
 
 !call mpas_log_write('MGD PIO_closefile')
       if (.not. handle % external_file_desc) then
-         call PIO_closefile(handle % pio_file)
+          IO_DEBUG_WRITE('Going to call PIO_closefile')
+          call PIO_closefile(handle % pio_file)
+          IO_DEBUG_WRITE('Called PIO_closefile')
       end if
 
    end subroutine MPAS_io_close
@@ -4923,6 +5119,7 @@ module mpas_io
       if (present(finalize_iosystem)) then
          if ( finalize_iosystem ) then
            call PIO_finalize(ioContext % pio_iosystem, pio_ierr)
+           IO_DEBUG_WRITE('PIO_finalize returned $i' COMMA intArgs=(/pio_ierr/))
            if (pio_ierr /= PIO_noerr) then
               if (present(ierr)) ierr = MPAS_IO_ERR_PIO
               return
