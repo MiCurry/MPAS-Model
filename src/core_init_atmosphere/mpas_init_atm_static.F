@@ -103,6 +103,10 @@
  real (kind=RKIND), dimension(:), pointer :: snoalb
  integer (kind=I8KIND), dimension(:), pointer :: snoalb_integer
 
+ integer (kind=I8KIND), dimension(:,:), pointer :: greenfrac_int
+ real (kind=RKIND), dimension(:,:), pointer :: greenfrac
+ real (kind=RKIND), dimension(:), pointer :: shdmin, shdmax
+
  integer, pointer :: category_min
  integer, pointer :: category_max
 
@@ -170,9 +174,6 @@
  real (kind=RKIND), dimension(:), pointer :: latEdge, lonEdge
  real (kind=RKIND), dimension(:), pointer :: fEdge, fVertex
 
- integer (kind=I8KIND), dimension(:,:), pointer :: greenfrac_int
- real (kind=RKIND), dimension(:), pointer :: shdmin, shdmax
- real (kind=RKIND), dimension(:,:), pointer :: greenfrac
  real (kind=RKIND), dimension(:,:), pointer :: albedo12m
  integer (kind=I8KIND), dimension(:,:), pointer :: albedo12m_int
  real (kind=RKIND) :: fillval
@@ -194,7 +195,7 @@
 
  integer (kind=I8KIND) :: i8val
  integer, pointer :: tile_bdr
- integer, pointer :: tile_nx, tile_ny, tile_nz
+ integer, pointer :: tile_nx, tile_ny
  integer, pointer :: tile_z_start, tile_z_end
 
  logical :: all_pixels_mapped_to_halo_cells
@@ -259,10 +260,7 @@
  call mpas_pool_get_array(mesh, 'iswater_lu', iswater_lu)
  call mpas_pool_get_array(mesh, 'soilcat_top', soilcat_top)
  call mpas_pool_get_array(mesh, 'landmask', landmask)
- call mpas_pool_get_array(mesh, 'greenfrac', greenfrac)
  call mpas_pool_get_array(mesh, 'albedo12m', albedo12m)
- call mpas_pool_get_array(mesh, 'shdmin', shdmin)
- call mpas_pool_get_array(mesh, 'shdmax', shdmax)
 
  call mpas_pool_get_config(mesh, 'on_a_sphere', on_a_sphere)
  call mpas_pool_get_config(mesh, 'sphere_radius', sphere_radius)
@@ -445,226 +443,8 @@
 !
 ! Interpolate GREENFRAC
 !
- if (trim(config_vegfrac_data) == 'MODIS') then
-
-    call mpas_log_write('Using MODIS FPAR 30-arc-second data for climatological monthly vegetation fraction')
-
-    geog_sub_path = 'greenfrac_fpar_modis/'
-
-    ierr = mgr % init(trim(config_geog_data_path)//trim(geog_sub_path))
-    if (ierr /= 0) then
-       call mpas_log_write('Error occurred when initalizing the interpolation of monthly vegetation fraction (greenfrac)', &
-                            messageType=MPAS_LOG_CRIT)
-    endif
-
-    call mpas_pool_get_config(mgr % pool, 'tile_bdr', tile_bdr)
-    call mpas_pool_get_config(mgr % pool, 'tile_x', tile_nx)
-    call mpas_pool_get_config(mgr % pool, 'tile_y', tile_ny)
-    call mpas_pool_get_config(mgr % pool, 'tile_z', tile_nz)
-    call mpas_pool_get_config(mgr % pool, 'missing_value', missing_value)
-
-    allocate(nhs(nCells))
-    allocate(greenfrac_int(tile_nz, nCells))
-    nhs(:) = 0
-    greenfrac(:,:) = 0.0
-    greenfrac_int(:,:) = 0_I8KIND
-    fillval = 0.0
-
-    do iCell = 1, nCells
-        if (nhs(iCell) == 0) then
-            tile => null()
-            ierr = mgr % get_tile(latCell(iCell), lonCell(iCell), tile)
-            if (ierr /= 0 .or. .not. associated(tile)) then
-                call mpas_log_write('Could not get tile that contained cell $i', intArgs=(/iCell/), messageType=MPAS_LOG_CRIT)
-            end if
-
-            ierr = mgr % push_tile(tile)
-            if (ierr /= 0) then
-                call mpas_log_write("Error pushing this tile onto the stack: "//trim(tile % fname), messageType=MPAS_LOG_CRIT)
-            end if
-        end if
-
-        do while (.not. mgr % is_stack_empty())
-            tile => mgr % pop_tile()
-
-            if (tile % is_processed) then
-                cycle
-            end if
-
-            call mpas_log_write('Processing tile: '//trim(tile % fname))
-
-            all_pixels_mapped_to_halo_cells = .true.
-
-            do j = tile_bdr + 1, tile_ny + tile_bdr, 1
-                do i = tile_bdr + 1, tile_nx + tile_bdr, 1
-
-                    call mgr % tile_to_latlon(tile, j, i, lat_pt, lon_pt)
-                    call mpas_latlon_to_xyz(xPixel, yPixel, zPixel, sphere_radius, lat_pt, lon_pt)
-                    call mpas_kd_search(tree, (/xPixel, yPixel, zPixel/), res)
-
-                    !
-                    ! This field only matters for land cells, and for all but the outermost boundary cells,
-                    ! we can safely assume that the nearest model grid cell contains the pixel (else, a different
-                    ! cell would be nearest)
-                    !
-                    if (landMask(res % id) == 1 .and. bdyMaskCell(res % id) < nBdyLayers) then
-                        do k = 1, tile_nz
-                            if (tile % tile(i, j, k) == missing_value) then
-                                i8val = int(fillval, kind=I8KIND)
-                            else
-                                i8val = int(tile % tile(i,j,k), kind=I8KIND)
-                            end if
-                            greenfrac_int(k, res % id) = greenfrac_int(k, res % id) + i8val
-                        end do
-                        nhs(res % id) = nhs(res % id) + 1
-
-                        if (res % id <= nCellsSolve) then
-                            all_pixels_mapped_to_halo_cells = .false.
-                        end if
-
-                    ! For outermost land cells, additional work is needed to verify that the pixel
-                    ! actually lies within the nearest cell
-                    else if (landMask(res % id) == 1) then
-                        if (mpas_in_cell(xPixel, yPixel, zPixel, xCell(res % id), yCell(res % id), zCell(res % id), &
-                                          nEdgesOnCell(res % id), verticesOnCell(:,res % id), xVertex, yVertex, zVertex)) then
-                            do k = 1, tile_nz
-                                if (tile % tile(i, j, k) == missing_value) then
-                                    i8val = int(fillval, kind=I8KIND)
-                                else
-                                    i8val = int(tile % tile(i,j,k), kind=I8KIND)
-                                end if
-                                greenfrac_int(k, res % id) = greenfrac_int(k, res % id) + i8val
-                            end do
-                            nhs(res % id) = nhs(res % id) + 1
-
-                            if (res % id <= nCellsSolve) then
-                                all_pixels_mapped_to_halo_cells = .false.
-                            end if
-                        end if
-                    end if
-                end do
-            end do
-
-            tile % is_processed = .true.
-
-            if (.not. all_pixels_mapped_to_halo_cells) then
-                ierr = mgr % push_neighbors(tile)
-                if (ierr /= 0) then
-                    call mpas_log_write("Error pushing the tile neighbors of: "//trim(tile%fname), messageType=MPAS_LOG_CRIT)
-                end if
-            end if
-
-        end do
-    end do
-
-    do iCell = 1, nCells
-        ! For land points that have no overlap with valid data, and for water points,
-        ! just use the fill value...
-        if (nhs(iCell) == 0) then
-            greenfrac(:,iCell) = fillval
-        else
-            greenfrac(:,iCell) = real(real(greenfrac_int(:,iCell), kind=R8KIND) / real(nhs(iCell), kind=R8KIND), kind=RKIND)
-        end if
-        shdmin(iCell) = minval(greenfrac(:,iCell))
-        shdmax(iCell) = maxval(greenfrac(:,iCell))
-    end do
-
-    deallocate(nhs)
-    deallocate(greenfrac_int)
-
-    ierr = mgr % finalize()
-    if (ierr /= 0) then
-       call mpas_log_write('Error occurred when finalizing the interpolation of monthly vegetation fraction (greenfrac)', &
-                            messageType=MPAS_LOG_CRIT)
-    endif
-
- else if (trim(config_vegfrac_data) == 'NCEP') then
-
-    call mpas_log_write('Using NCEP 0.144-deg data for climatological monthly vegetation fraction')
-
-    nx = 1256
-    ny = 1256
-    nz = 12
-    isigned     = 0
-    endian      = 0
-    wordsize    = 1
-    scalefactor = 1.0
-    allocate(rarray(nx,ny,nz))
-    allocate(vegfra(-2:2503,-2:1253,12))
-    greenfrac(:,:) = 0.0
-
-    rarray_ptr = c_loc(rarray)
-
-    call map_set(PROJ_LATLON, proj,    &
-                 latinc = 0.144_RKIND, &
-                 loninc = 0.144_RKIND, &
-                 knowni = 1.0_RKIND,   &
-                 knownj = 1.0_RKIND,   &
-                 lat1 = -89.928_RKIND, &
-                 lon1 = -179.928_RKIND)
-
-    write(fname,'(a,i5.5,a1,i5.5,a1,i5.5,a1,i5.5)') trim(geog_data_path)// &
-          'greenfrac/',1,'-',1250,'.',1,'-',1250
-    call mpas_log_write(trim(fname))
-    call mpas_f_to_c_string(fname, c_fname)
-
-    call read_geogrid(c_fname,rarray_ptr,nx,ny,nz,isigned,endian, &
-                      wordsize,istatus)
-    call init_atm_check_read_error(istatus,fname)
-    rarray(:,:,:) = rarray(:,:,:) * real(scalefactor, kind=c_float)
-    vegfra(-2:1250,-2:1253,1:12) = rarray(1:1253,1:1256,1:12)
-
-    write(fname,'(a,i5.5,a1,i5.5,a1,i5.5,a1,i5.5)') trim(geog_data_path)// &
-          'greenfrac/',1251,'-',2500,'.',1,'-',1250
-    call mpas_log_write(trim(fname))
-    call mpas_f_to_c_string(fname, c_fname)
-
-    call read_geogrid(c_fname,rarray_ptr,nx,ny,nz,isigned,endian, &
-                      wordsize,istatus)
-    call init_atm_check_read_error(istatus,fname)
-    rarray(:,:,:) = rarray(:,:,:) * real(scalefactor, kind=c_float)
-    vegfra(1251:2503,-2:1253,1:12) = rarray(4:1256,1:1256,1:12)
-
-    do iCell = 1,nCells
-
-       if (landmask(iCell) == 1) then
-          lat = latCell(iCell) * DEG_PER_RAD
-          lon = lonCell(iCell) * DEG_PER_RAD
-          call latlon_to_ij(proj, lat, lon, x, y)
-          if(x < 0.5) then
-             lon = lon + 360.0
-             call latlon_to_ij(proj, lat, lon, x, y)
-          else if(x >= 2500.5) then
-             lon = lon - 360.0
-             call latlon_to_ij(proj, lat, lon, x, y)
-          end if
-          if (y < 1.0) y = 1.0
-          if (y > 1249.0) y = 1249.0
-          do k = 1,12
-             greenfrac(k,iCell) = interp_sequence(x,y,k,vegfra,-2,2503,-2,1253, &
-                                                    1,12,-1.e30_RKIND,interp_list,1)
-          end do
-       else
-          greenfrac(:,iCell) = 0.0
-       end if
-       shdmin(iCell) = minval(greenfrac(:,iCell))
-       shdmax(iCell) = maxval(greenfrac(:,iCell))
-
-    end do
-    deallocate(rarray)
-    deallocate(vegfra)
-
- else
-
-    call mpas_log_write('*****************************************************************', messageType=MPAS_LOG_ERR)
-    call mpas_log_write('Invalid monthly vegetation fraction dataset '''//trim(config_vegfrac_data) &
-                                  //''' selected for config_vegfrac_data',                   messageType=MPAS_LOG_ERR)
-    call mpas_log_write('   Possible options are: ''MODIS'', ''NCEP''',                      messageType=MPAS_LOG_ERR)
-    call mpas_log_write('*****************************************************************', messageType=MPAS_LOG_ERR)
-    call mpas_log_write('Please correct the namelist.', messageType=MPAS_LOG_CRIT)
-
- end if
-
+ call mpas_log_write('--- start interpolate GREENFRAC')
+ call interp_greenfrac(mesh, configs, tree, landmask)
  call mpas_log_write('--- end interpolate GREENFRAC')
 
 
@@ -1831,6 +1611,244 @@
      end if
 
  end subroutine interp_snoalb
+
+
+!--------------------------------------------------------------------------------------------------
+! Interpolate climatological vegetation fraction (greenfrac)
+!--------------------------------------------------------------------------------------------------
+
+ !***********************************************************************
+ !
+ !  routine greenfrac_interp_accumulation
+ !
+ !> \brief   Accumulate maximum green fraction dataset values
+ !> \author  Miles Curry
+ !> \date    25 January 2020
+ !> \details
+ !> This routine will be passed in to init_atm_map_static_data to accumulate green fraction values
+ !> to cells.
+ !
+ !-----------------------------------------------------------------------
+ subroutine greenfrac_interp_accumulation(mgr, iCell, pixel)
+
+     implicit none
+
+     type (mpas_geotile_mgr_type), intent(in) :: mgr
+     integer, intent(in) :: iCell
+     integer (kind=I8KIND), dimension(:), intent(in) :: pixel
+
+     real (kind=RKIND), pointer :: missing_value
+     integer (kind=I8KIND) :: i8val_lcl
+
+     integer, pointer :: tile_nz
+     integer :: fillval
+     integer :: k
+
+     fillval = 0.0
+
+     call mpas_pool_get_config(mgr % pool, 'missing_value', missing_value)
+     call mpas_pool_get_config(mgr % pool, 'tile_z', tile_nz)
+
+     do k = 1, tile_nz
+         if (pixel(k) == missing_value) then
+             i8val_lcl = int(fillval, kind=I8KIND)
+         else
+             i8val_lcl = int(pixel(k), kind=I8KIND)
+         end if
+         greenfrac_int(k, iCell) = greenfrac_int(k, iCell) + i8val_lcl
+     end do
+     nhs(iCell) = nhs(iCell) + 1
+
+ end subroutine greenfrac_interp_accumulation
+
+ !***********************************************************************
+ !
+ !  routine interp_greenfrac
+ !
+ !> \brief   Interpolate climatological vegetation fraction (greenfrac)
+ !> \author  Miles Curry
+ !> \date    25 January 2020
+ !> \details
+ !>
+ !
+ !-----------------------------------------------------------------------
+ subroutine interp_greenfrac(mesh, configs, kdtree, landmask)
+
+     implicit none
+
+     ! Input variables
+     type (mpas_pool_type), intent(inout) :: mesh
+     type (mpas_pool_type), intent(in) :: configs
+     type (mpas_kd_type), pointer, intent(in) :: kdtree
+     integer, dimension(:), pointer :: landmask
+
+     ! Local variables
+     type (mpas_geotile_mgr_type) :: mgr
+     integer, pointer :: nCells
+
+     type (proj_info) :: proj
+     character (len=StrKIND) :: fname
+     character (kind=c_char), dimension(StrKIND+1) :: c_fname
+     character (len=StrKIND), pointer :: config_vegfrac_data
+     character (len=StrKIND), pointer :: geog_data_path
+     character (len=StrKIND) :: geog_sub_path
+     integer (c_int) :: endian, isigned, istatus, wordsize
+     integer (c_int) :: nx, ny, nz
+     integer, dimension(5) :: interp_list
+     integer, pointer :: tile_nz
+     real (kind=RKIND) :: fillval
+     real (kind=RKIND), pointer :: scalefactor
+     real (kind=c_float), dimension(:,:,:), pointer, contiguous :: rarray
+     real (kind=RKIND), dimension(:,:,:), allocatable :: vegfra
+     real (kind=RKIND), dimension(:), pointer ::latCell, lonCell
+     real (kind=RKIND) :: lat, lon, x, y
+     type (c_ptr) :: rarray_ptr
+     integer :: iCell, k
+     integer :: ierr
+
+
+     call mpas_pool_get_config(configs, 'config_geog_data_path', geog_data_path)
+     call mpas_pool_get_config(configs, 'config_vegfrac_data', config_vegfrac_data)
+
+     if (trim(config_vegfrac_data) == 'MODIS') then
+         geog_sub_path = 'greenfrac_fpar_modis/'
+
+         ierr = mgr % init(trim(geog_data_path)//trim(geog_sub_path))
+         if (ierr /= 0) then
+             call mpas_log_write("Error occured initalizing interpolation for "//trim(geog_data_path), messageType=MPAS_LOG_CRIT)
+             return
+         end if
+
+         call mpas_pool_get_dimension(mesh, 'nCells', nCells)
+         call mpas_pool_get_config(mgr % pool, 'scale_factor', scalefactor)
+         call mpas_pool_get_config(mgr % pool, 'tile_z', tile_nz)
+         call mpas_pool_get_array(mesh, 'greenfrac', greenfrac)
+         call mpas_pool_get_array(mesh, 'shdmin', shdmin)
+         call mpas_pool_get_array(mesh, 'shdmax', shdmax)
+
+         allocate(nhs(nCells))
+         allocate(greenfrac_int(tile_nz, nCells))
+         greenfrac_int(:,:) = 0
+         greenfrac(:,:) = 0.0
+         nhs(:) = 0
+         fillval = 0.0
+
+         call init_atm_map_static_data(mesh, mgr, kdtree, continuous_interp_criteria, greenfrac_interp_accumulation)
+
+         do iCell = 1, nCells
+             ! For land points that have no overlap with valid data, and for water points,
+             ! just use the fill value...
+             if (nhs(iCell) == 0) then
+                 greenfrac(:,iCell) = fillval
+             else
+                 greenfrac(:,iCell) = real(greenfrac_int(:,iCell), kind=R8KIND) / real(nhs(iCell), kind=R8KIND)
+             end if
+             shdmin(iCell) = minval(greenfrac(:,iCell))
+             shdmax(iCell) = maxval(greenfrac(:,iCell))
+         end do
+
+         ierr = mgr % finalize()
+         if (ierr /= 0) then
+             call mpas_log_write("Error occured finalizing interpolation for "//trim(geog_data_path), messageType=MPAS_LOG_CRIT)
+             return
+         end if
+
+     else if (trim(config_vegfrac_data) == 'NCEP') then
+
+        call mpas_log_write('Using NCEP 0.144-deg data for climatological monthly vegetation fraction')
+        call mpas_pool_get_dimension(mesh, 'nCells', nCells)
+        call mpas_pool_get_array(mesh, 'latCell', latCell)
+        call mpas_pool_get_array(mesh, 'lonCell', lonCell)
+        call mpas_pool_get_array(mesh, 'greenfrac', greenfrac)
+        call mpas_pool_get_array(mesh, 'shdmin', shdmin)
+        call mpas_pool_get_array(mesh, 'shdmax', shdmax)
+
+        nx = 1256
+        ny = 1256
+        nz = 12
+        isigned     = 0
+        endian      = 0
+        wordsize    = 1
+        allocate(scalefactor)
+        scalefactor = 1.0
+        allocate(rarray(nx,ny,nz))
+        allocate(vegfra(-2:2503,-2:1253,12))
+        greenfrac(:,:) = 0.0
+
+        rarray_ptr = c_loc(rarray)
+
+        call map_set(PROJ_LATLON, proj,    &
+                     latinc = 0.144_RKIND, &
+                     loninc = 0.144_RKIND, &
+                     knowni = 1.0_RKIND,   &
+                     knownj = 1.0_RKIND,   &
+                     lat1 = -89.928_RKIND, &
+                     lon1 = -179.928_RKIND)
+
+        write(fname,'(a,i5.5,a1,i5.5,a1,i5.5,a1,i5.5)') trim(geog_data_path)// &
+              'greenfrac/',1,'-',1250,'.',1,'-',1250
+        call mpas_log_write(trim(fname))
+        call mpas_f_to_c_string(fname, c_fname)
+
+        call read_geogrid(c_fname,rarray_ptr,nx,ny,nz,isigned,endian, &
+                          wordsize,istatus)
+        call init_atm_check_read_error(istatus,fname)
+        rarray(:,:,:) = rarray(:,:,:) * real(scalefactor, kind=c_float)
+        vegfra(-2:1250,-2:1253,1:12) = rarray(1:1253,1:1256,1:12)
+
+        write(fname,'(a,i5.5,a1,i5.5,a1,i5.5,a1,i5.5)') trim(geog_data_path)// &
+              'greenfrac/',1251,'-',2500,'.',1,'-',1250
+        call mpas_log_write(trim(fname))
+        call mpas_f_to_c_string(fname, c_fname)
+
+        call read_geogrid(c_fname,rarray_ptr,nx,ny,nz,isigned,endian, &
+                          wordsize,istatus)
+        call init_atm_check_read_error(istatus,fname)
+        rarray(:,:,:) = rarray(:,:,:) * real(scalefactor, kind=c_float)
+        vegfra(1251:2503,-2:1253,1:12) = rarray(4:1256,1:1256,1:12)
+
+        do iCell = 1,nCells
+
+           if (landmask(iCell) == 1) then
+              lat = latCell(iCell) * DEG_PER_RAD
+              lon = lonCell(iCell) * DEG_PER_RAD
+              call latlon_to_ij(proj, lat, lon, x, y)
+              if(x < 0.5) then
+                 lon = lon + 360.0
+                 call latlon_to_ij(proj, lat, lon, x, y)
+              else if(x >= 2500.5) then
+                 lon = lon - 360.0
+                 call latlon_to_ij(proj, lat, lon, x, y)
+              end if
+              if (y < 1.0) y = 1.0
+              if (y > 1249.0) y = 1249.0
+              do k = 1,12
+                 greenfrac(k,iCell) = interp_sequence(x,y,k,vegfra,-2,2503,-2,1253, &
+                                                        1,12,-1.e30_RKIND,interp_list,1)
+              end do
+           else
+              greenfrac(:,iCell) = 0.0
+           end if
+           shdmin(iCell) = minval(greenfrac(:,iCell))
+           shdmax(iCell) = maxval(greenfrac(:,iCell))
+
+        end do
+        deallocate(rarray)
+        deallocate(vegfra)
+        deallocate(scalefactor)
+
+     else
+
+        call mpas_log_write('*****************************************************************', messageType=MPAS_LOG_ERR)
+        call mpas_log_write('Invalid monthly vegetation fraction dataset '''//trim(config_vegfrac_data) &
+                                      //''' selected for config_vegfrac_data',                   messageType=MPAS_LOG_ERR)
+        call mpas_log_write('   Possible options are: ''MODIS'', ''NCEP''',                      messageType=MPAS_LOG_ERR)
+        call mpas_log_write('*****************************************************************', messageType=MPAS_LOG_ERR)
+        call mpas_log_write('Please correct the namelist.', messageType=MPAS_LOG_CRIT)
+
+     end if
+
+ end subroutine interp_greenfrac
 
 
 !==================================================================================================
