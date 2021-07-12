@@ -100,6 +100,9 @@
  ! Landmask is used by the accumulation function for maxsnoalb so it needs to be a global variable
  integer, dimension(:), pointer :: landmask
 
+ real (kind=RKIND), dimension(:), pointer :: snoalb
+ integer (kind=I8KIND), dimension(:), pointer :: snoalb_integer
+
  integer, pointer :: category_min
  integer, pointer :: category_max
 
@@ -145,7 +148,6 @@
 
  real(kind=RKIND):: lat,lon,x,y
  real(kind=RKIND):: lat_pt,lon_pt
- real(kind=RKIND),dimension(:,:),allocatable  :: maxsnowalb
  real(kind=RKIND),dimension(:,:,:),allocatable:: vegfra
 
  integer, pointer :: isice_lu, iswater_lu
@@ -169,8 +171,6 @@
  real (kind=RKIND), dimension(:), pointer :: fEdge, fVertex
 
  integer (kind=I8KIND), dimension(:,:), pointer :: greenfrac_int
- real (kind=RKIND), dimension(:), pointer :: snoalb
- integer (kind=I8KIND), dimension(:), pointer :: snoalb_integer
  real (kind=RKIND), dimension(:), pointer :: shdmin, shdmax
  real (kind=RKIND), dimension(:,:), pointer :: greenfrac
  real (kind=RKIND), dimension(:,:), pointer :: albedo12m
@@ -259,7 +259,6 @@
  call mpas_pool_get_array(mesh, 'iswater_lu', iswater_lu)
  call mpas_pool_get_array(mesh, 'soilcat_top', soilcat_top)
  call mpas_pool_get_array(mesh, 'landmask', landmask)
- call mpas_pool_get_array(mesh, 'snoalb', snoalb)
  call mpas_pool_get_array(mesh, 'greenfrac', greenfrac)
  call mpas_pool_get_array(mesh, 'albedo12m', albedo12m)
  call mpas_pool_get_array(mesh, 'shdmin', shdmin)
@@ -438,245 +437,8 @@
 !
 ! Interpolate SNOALB
 !
- if (trim(config_maxsnowalbedo_data) == 'MODIS') then
-
-    geog_sub_path = 'maxsnowalb_modis/'
-
-    call mpas_log_write('Using MODIS 0.05-deg data for maximum snow albedo')
-    if (supersample_fac > 1) then
-       call mpas_log_write('   Dataset will be supersampled by a factor of $i', intArgs=(/supersample_fac/))
-    end if
-
-    ierr = mgr % init(trim(config_geog_data_path)//trim(geog_sub_path))
-    if (ierr /= 0) then
-       call mpas_log_write('Error occurred when initializing the interpolation of snow albedo (snoalb)', &
-                            messageType=MPAS_LOG_CRIT)
-    endif
-
-    call mpas_pool_get_config(mgr % pool, 'tile_bdr', tile_bdr)
-    call mpas_pool_get_config(mgr % pool, 'tile_x', tile_nx)
-    call mpas_pool_get_config(mgr % pool, 'tile_y', tile_ny)
-    call mpas_pool_get_config(mgr % pool, 'missing_value', missing_value)
-    call mpas_pool_get_config(mgr % pool, 'scale_factor', scalefactor_ptr)
-    scalefactor = scalefactor_ptr
-
-    allocate(nhs(nCells))
-    allocate(snoalb_integer(nCells))
-    snoalb_integer(:) = 0
-    snoalb(:) = 0.0
-    nhs(:) = 0
-    fillval = 0.0
-
-    do iCell = 1, nCells
-        if (nhs(iCell) == 0) then
-            tile => null()
-            ierr = mgr % get_tile(latCell(iCell), lonCell(iCell), tile)
-            if (ierr /= 0 .or. .not. associated(tile)) then
-                call mpas_log_write('Could not get tile that contained cell $i', intArgs=(/iCell/), messageType=MPAS_LOG_CRIT)
-            end if
-
-            ierr = mgr % push_tile(tile)
-            if (ierr /= 0) then
-                call mpas_log_write("Error pushing this tile onto the stack: "//trim(tile%fname), messageType=MPAS_LOG_CRIT)
-            end if
-        end if
-
-        do while (.not. mgr % is_stack_empty())
-            tile => mgr % pop_tile()
-
-            if (tile % is_processed) then
-                cycle
-            end if
-
-            call mpas_log_write('Processing tile: '//trim(tile % fname))
-
-            all_pixels_mapped_to_halo_cells = .true.
-
-            do j = supersample_fac * tile_bdr + 1, supersample_fac * (tile_ny + tile_bdr), 1
-                do i = supersample_fac * tile_bdr + 1, supersample_fac * (tile_nx + tile_bdr), 1
-
-                    ii = (i - 1) / supersample_fac + 1
-                    jj = (j - 1) / supersample_fac + 1
-
-                    i8val = int(tile % tile(ii, jj, 1), kind=I8KIND)
-
-                    call mgr % tile_to_latlon(tile, j, i, lat_pt, lon_pt, supersample_fac)
-                    call mpas_latlon_to_xyz(xPixel, yPixel, zPixel, sphere_radius, lat_pt, lon_pt)
-                    call mpas_kd_search(tree, (/xPixel, yPixel, zPixel/), res)
-
-                    if (bdyMaskCell(res % id) < nBdyLayers) then
-                        !
-                        ! This field only matters for land cells, and for all but the outermost boundary cells,
-                        ! we can safely assume that the nearest model grid cell contains the pixel (else, a different
-                        ! cell would be nearest).
-                        !
-                        ! Since values in i8val are not yet scaled, we can compare them to missing_value, which
-                        ! also is not scaled, without scaling either value
-                        if (landmask(res % id) == 1 .and. i8val /= int(missing_value, kind=I8KIND)) then
-                            snoalb_integer(res % id) = snoalb_integer(res % id) + i8val
-                            nhs(res % id) = nhs(res % id) + 1
-                        end if
-
-                        !
-                        ! When a pixel maps to a non-land cell or is a missing value, the values are not accumulated
-                        ! above; however, these pixels may still reside in an owned cell, in which case we will still need
-                        ! to push the tile's neighbors onto the stack for processing.
-                        !
-                        if (res % id <= nCellsSolve) then
-                            all_pixels_mapped_to_halo_cells = .false.
-                        end if
-                    ! For outermost cells, additional work is needed to verify that the pixel
-                    ! actually lies within the nearest cell
-                    else
-                        if (mpas_in_cell(xPixel, yPixel, zPixel, xCell(res % id), yCell(res % id), zCell(res % id), &
-                                          nEdgesOnCell(res % id), verticesOnCell(:,res % id), xVertex, yVertex, zVertex)) then
-
-                            ! Since values in i8val are not yet scaled, we can compare them to missing_value, which
-                            ! also is not scaled, without scaling either value
-                            if (landmask(res % id) == 1 .and. i8val /= int(missing_value, kind=I8KIND)) then
-                                snoalb_integer(res % id) = snoalb_integer(res % id) + i8val
-                                nhs(res % id) = nhs(res % id) + 1
-                            end if
-
-                            !
-                            ! When a pixel maps to a non-land cell or is a missing value, the values are not accumulated
-                            ! above; however, these pixels may still reside in an owned cell, in which case we will still need
-                            ! to push the tile's neighbors onto the stack for processing.
-                            !
-                            if (res % id <= nCellsSolve) then
-                                all_pixels_mapped_to_halo_cells = .false.
-                            end if
-                        end if
-                    end if
-                end do
-            end do
-
-            tile % is_processed = .true.
-
-            if (.not. all_pixels_mapped_to_halo_cells) then
-                ierr = mgr % push_neighbors(tile)
-                if (ierr /= 0) then
-                    call mpas_log_write("Error pushing the tile neighbors of: "//trim(tile%fname), messageType=MPAS_LOG_CRIT)
-                end if
-            end if
-        end do
-    end do
-
-    do iCell = 1, nCells
-        !
-        ! Mismatches in land mask can lead to MPAS land points with no maximum snow albedo.
-        ! Ideally, we would perform a search for nearby valid albedos, but for now using
-        ! the fill value will at least allow the model to run. In general, the number of cells
-        ! to be treated in this way tends to be a very small fraction of the total number of cells.
-        !
-        if (nhs(iCell) == 0) then
-            snoalb(iCell) = fillval
-        else
-            snoalb(iCell) = real(real(snoalb_integer(iCell), kind=R8KIND) / real(nhs(iCell), kind=R8KIND), kind=RKIND)
-            snoalb(iCell) = snoalb(iCell) * scalefactor
-            snoalb(iCell) = 0.01_RKIND * snoalb(iCell) ! Convert from percent to fraction
-        endif
-    end do
-
-    deallocate(nhs)
-    deallocate(snoalb_integer)
-
-    ierr = mgr % finalize()
-    if (ierr /= 0) then
-       call mpas_log_write('Error occurred when finalizing the interpolation of snow albedo (snoalb)', &
-                            messageType=MPAS_LOG_CRIT)
-    endif
-
- else if (trim(config_maxsnowalbedo_data) == 'NCEP') then
-
-    call mpas_log_write('Using NCEP 1.0-deg data for maximum snow albedo')
-
-    nx = 186
-    ny = 186
-    nz = 1
-    isigned     = 0
-    endian      = 0
-    wordsize    = 1
-    scalefactor = 1.0
-    allocate(rarray(nx,ny,nz))
-    allocate(maxsnowalb(-2:363,-2:183))
-    snoalb(:) = 0.0
-
-    rarray_ptr = c_loc(rarray)
-
-    call map_set(PROJ_LATLON, proj,  &
-                 latinc = 1.0_RKIND, &
-                 loninc = 1.0_RKIND, &
-                 knowni = 1.0_RKIND, &
-                 knownj = 1.0_RKIND, &
-                 lat1 = -89.5_RKIND, &
-                 lon1 = -179.5_RKIND)
-
-    write(fname,'(a,i5.5,a1,i5.5,a1,i5.5,a1,i5.5)') trim(geog_data_path)// &
-          'maxsnowalb/',1,'-',180,'.',1,'-',180
-    call mpas_log_write(trim(fname))
-    call mpas_f_to_c_string(fname, c_fname)
-
-    call read_geogrid(c_fname,rarray_ptr,nx,ny,nz,isigned,endian, &
-                      wordsize,istatus)
-    call init_atm_check_read_error(istatus,fname)
-    rarray(:,:,:) = rarray(:,:,:) * real(scalefactor, kind=c_float)
-    maxsnowalb(-2:180,-2:183) = rarray(1:183,1:186,1)
-
-    write(fname,'(a,i5.5,a1,i5.5,a1,i5.5,a1,i5.5)') trim(geog_data_path)// &
-          'maxsnowalb/',181,'-',360,'.',1,'-',180
-    call mpas_log_write(trim(fname))
-    call mpas_f_to_c_string(fname, c_fname)
-
-    call read_geogrid(c_fname,rarray_ptr,nx,ny,nz,isigned,endian, &
-                      wordsize,istatus)
-    call init_atm_check_read_error(istatus, fname)
-    rarray(:,:,:) = rarray(:,:,:) * real(scalefactor, kind=c_float)
-    maxsnowalb(181:363,-2:183) = rarray(4:186,1:186,1)
-
-    interp_list(1) = FOUR_POINT
-    interp_list(2) = W_AVERAGE4
-    interp_list(3) = W_AVERAGE16
-    interp_list(4) = SEARCH
-    interp_list(5) = 0
-
-    do iCell = 1,nCells
-
-       if(landmask(iCell) == 1) then
-          lat = latCell(iCell) * DEG_PER_RAD
-          lon = lonCell(iCell) * DEG_PER_RAD
-          call latlon_to_ij(proj, lat, lon, x, y)
-          if(x < 0.5) then
-             lon = lon + 360.0
-             call latlon_to_ij(proj, lat, lon, x, y)
-          else if (x >= 360.5) then
-             lon = lon - 360.0
-             call latlon_to_ij(proj, lat, lon, x, y)
-          end if
-          if (y < 1.0) y = 1.0
-          if (y > 179.0) y = 179.0
-          snoalb(iCell) = interp_sequence(x,y,1,maxsnowalb,-2,363,-2,183, &
-                                            1,1,0.0_RKIND,interp_list,1)
-       else
-          snoalb(iCell) = 0.0
-       end if
-
-    end do
-    snoalb(:) = snoalb(:) / 100.0
-    deallocate(rarray)
-    deallocate(maxsnowalb)
-
- else
-
-    call mpas_log_write('*****************************************************************', messageType=MPAS_LOG_ERR)
-    call mpas_log_write('Invalid maximum snow albedo dataset '''//trim(config_maxsnowalbedo_data) &
-                                  //''' selected for config_maxsnowalbedo_data',             messageType=MPAS_LOG_ERR)
-    call mpas_log_write('   Possible options are: ''MODIS'', ''NCEP''',                      messageType=MPAS_LOG_ERR)
-    call mpas_log_write('*****************************************************************', messageType=MPAS_LOG_ERR)
-    call mpas_log_write('Please correct the namelist.', messageType=MPAS_LOG_CRIT)
-
- end if
-
+ call mpas_log_write('--- start interpolate SNOALB')
+ call interp_snoalb(mesh, configs, tree, landmask)
  call mpas_log_write('--- end interpolate SNOALB')
 
 
@@ -1839,6 +1601,236 @@
      deallocate(soiltemp_1deg)
 
  end subroutine interp_soiltemp
+
+
+!--------------------------------------------------------------------------------------------------
+! Interpolate maximum snow albedo
+!--------------------------------------------------------------------------------------------------
+
+ !***********************************************************************
+ !
+ !  routine snoalb_interp_accumulation
+ !
+ !> \brief   Accumulate maximum snowalbedo dataset values
+ !> \author  Miles Curry
+ !> \date    25 January 2020
+ !> \details
+ !> This routine will be passed in to init_atm_map_static_data to accumulate maximum
+ !> snoalbedo values to cells.
+ !
+ !-----------------------------------------------------------------------
+ subroutine snoalb_interp_accumulation(mgr, iCell, pixel)
+
+     implicit none
+
+     type (mpas_geotile_mgr_type), intent(in) :: mgr
+     integer, intent(in) ::iCell
+     integer (kind=I8KIND), dimension(:), intent(in) :: pixel
+     real (kind=RKIND), pointer :: missing_value
+
+     call mpas_pool_get_config(mgr % pool, 'missing_value', missing_value)
+
+     if (landmask(iCell) == 1 .and. pixel(1) /= int(missing_value, kind=I8KIND)) then
+         snoalb_integer(iCell) = snoalb_integer(iCell) + int(pixel(1), kind=I8KIND)
+         nhs(iCell) = nhs(iCell) + 1
+     end if
+
+ end subroutine snoalb_interp_accumulation
+
+
+ !***********************************************************************
+ !
+ !  routine interp_snoalb
+ !
+ !> \brief   Interpolate maximum snow albedo
+ !> \author  Miles Curry
+ !> \date    25 January 2020
+ !> \details
+ !> Interpolate maximum snow albedo top by using the init_atm_map_static_data routine and
+ !> accumulating the pixel values into each cell using snoalb_interp_accumulation.
+ !
+ !-----------------------------------------------------------------------
+ subroutine interp_snoalb(mesh, configs, kdtree, landmask)
+
+     implicit none
+
+     ! Input variables
+     type (mpas_pool_type), intent(inout) :: mesh
+     type (mpas_pool_type), intent(in) :: configs
+     type (mpas_kd_type), pointer, intent(in) :: kdtree
+     integer, dimension(:), pointer :: landmask
+
+     ! Local variables
+     type (mpas_geotile_mgr_type) :: mgr
+     integer, pointer :: nCells
+
+     type (proj_info) :: proj
+     character (len=StrKIND) :: fname
+     character (kind=c_char), dimension(StrKIND+1) :: c_fname
+     character (len=StrKIND), pointer :: config_maxsnowalbedo_data
+     character (len=StrKIND), pointer :: geog_data_path
+     character (len=StrKIND) :: geog_sub_path
+     integer (c_int) :: endian, isigned, istatus, wordsize
+     integer (c_int) :: nx, ny, nz
+     integer, dimension(5) :: interp_list
+     integer, pointer :: supersample_fac
+     real (kind=RKIND) :: fillval
+     real (kind=RKIND), pointer :: scalefactor
+     real (kind=RKIND), dimension(:,:), allocatable :: maxsnowalb
+     real (kind=c_float), dimension(:,:,:), pointer, contiguous :: rarray
+     real (kind=RKIND), dimension(:), pointer ::latCell, lonCell
+     real (kind=RKIND) :: lat, lon, x, y
+     type (c_ptr) :: rarray_ptr
+
+     integer :: iCell
+     integer :: ierr
+
+     call mpas_pool_get_config(configs, 'config_geog_data_path', geog_data_path)
+     call mpas_pool_get_config(configs, 'config_maxsnowalbedo_data', config_maxsnowalbedo_data)
+
+     if (trim(config_maxsnowalbedo_data) == 'MODIS') then
+         geog_sub_path = 'maxsnowalb_modis/'
+         ierr = mgr % init(trim(geog_data_path)//trim(geog_sub_path))
+         if (ierr /= 0) then
+             call mpas_log_write("Error occured initalizing interpolation for "//trim(geog_data_path), messageType=MPAS_LOG_CRIT)
+             return
+         end if
+
+         call mpas_pool_get_dimension(mesh, 'nCells', nCells)
+         call mpas_pool_get_array(mesh, 'snoalb', snoalb)
+         call mpas_pool_get_config(mgr % pool, 'scale_factor', scalefactor)
+         call mpas_pool_get_config(configs, 'config_supersample_factor', supersample_fac)
+
+         !
+         ! Store tile values as a I8KIND integer temporarily to avoid floating
+         ! point round off differences and to have +/- 9.22x10^18 range of representative
+         ! values. For example, a 120 km mesh with a 1 meter data set with 6 decimal of
+         ! precision will allow for values of 180x10^12.
+         !
+         allocate(nhs(nCells))
+         allocate(snoalb_integer(nCells))
+         snoalb_integer(:) = 0
+         snoalb(:) = 0.0
+         nhs(:) = 0
+         fillval = 0
+
+         call init_atm_map_static_data(mesh, mgr, kdtree, continuous_interp_criteria, snoalb_interp_accumulation, supersample_fac)
+
+         do iCell = 1, nCells
+             if (nhs(iCell) == 0) then
+                snoalb(iCell) = fillval
+             else
+                snoalb(iCell) = real(snoalb_integer(iCell), kind=R8KIND) / real(nhs(iCell), kind=R8KIND)
+                snoalb(iCell) = snoalb(iCell) * scalefactor
+                snoalb(iCell) = 0.01_RKIND * snoalb(iCell) ! Convert from percent to fraction
+             end if
+         end do
+         deallocate(nhs)
+         deallocate(snoalb_integer)
+
+         ierr = mgr % finalize()
+         if (ierr /= 0) then
+             call mpas_log_write("Error occured finalizing interpolation for "//trim(geog_data_path), messageType=MPAS_LOG_CRIT)
+             return
+         end if
+
+     else if (trim(config_maxsnowalbedo_data) == 'NCEP') then
+
+        call mpas_log_write('Using NCEP 1.0-deg data for maximum snow albedo')
+        call mpas_pool_get_dimension(mesh, 'nCells', nCells)
+        call mpas_pool_get_array(mesh, 'latCell', latCell)
+        call mpas_pool_get_array(mesh, 'lonCell', lonCell)
+        call mpas_pool_get_array(mesh, 'snoalb', snoalb)
+
+        nx = 186
+        ny = 186
+        nz = 1
+        isigned     = 0
+        endian      = 0
+        wordsize    = 1
+        allocate(scalefactor)
+        scalefactor = 1.0
+        allocate(rarray(nx,ny,nz))
+        allocate(maxsnowalb(-2:363,-2:183))
+        snoalb(:) = 0.0
+
+        rarray_ptr = c_loc(rarray)
+
+        call map_set(PROJ_LATLON, proj,  &
+                     latinc = 1.0_RKIND, &
+                     loninc = 1.0_RKIND, &
+                     knowni = 1.0_RKIND, &
+                     knownj = 1.0_RKIND, &
+                     lat1 = -89.5_RKIND, &
+                     lon1 = -179.5_RKIND)
+
+        write(fname,'(a,i5.5,a1,i5.5,a1,i5.5,a1,i5.5)') trim(geog_data_path)// &
+              'maxsnowalb/',1,'-',180,'.',1,'-',180
+        call mpas_log_write(trim(fname))
+        call mpas_f_to_c_string(fname, c_fname)
+
+        call read_geogrid(c_fname,rarray_ptr,nx,ny,nz,isigned,endian, &
+                          wordsize,istatus)
+        call init_atm_check_read_error(istatus,fname)
+        rarray(:,:,:) = rarray(:,:,:) * real(scalefactor, kind=c_float)
+        maxsnowalb(-2:180,-2:183) = rarray(1:183,1:186,1)
+
+        write(fname,'(a,i5.5,a1,i5.5,a1,i5.5,a1,i5.5)') trim(geog_data_path)// &
+              'maxsnowalb/',181,'-',360,'.',1,'-',180
+        call mpas_log_write(trim(fname))
+        call mpas_f_to_c_string(fname, c_fname)
+
+        call read_geogrid(c_fname,rarray_ptr,nx,ny,nz,isigned,endian, &
+                          wordsize,istatus)
+        call init_atm_check_read_error(istatus, fname)
+        rarray(:,:,:) = rarray(:,:,:) * real(scalefactor, kind=c_float)
+        maxsnowalb(181:363,-2:183) = rarray(4:186,1:186,1)
+
+        interp_list(1) = FOUR_POINT
+        interp_list(2) = W_AVERAGE4
+        interp_list(3) = W_AVERAGE16
+        interp_list(4) = SEARCH
+        interp_list(5) = 0
+
+        do iCell = 1,nCells
+
+           if(landmask(iCell) == 1) then
+              lat = latCell(iCell) * DEG_PER_RAD
+              lon = lonCell(iCell) * DEG_PER_RAD
+              call latlon_to_ij(proj, lat, lon, x, y)
+              if(x < 0.5) then
+                 lon = lon + 360.0
+                 call latlon_to_ij(proj, lat, lon, x, y)
+              else if (x >= 360.5) then
+                 lon = lon - 360.0
+                 call latlon_to_ij(proj, lat, lon, x, y)
+              end if
+              if (y < 1.0) y = 1.0
+              if (y > 179.0) y = 179.0
+              snoalb(iCell) = interp_sequence(x,y,1,maxsnowalb,-2,363,-2,183, &
+                                                1,1,0.0_RKIND,interp_list,1)
+           else
+              snoalb(iCell) = 0.0
+           end if
+
+        end do
+        snoalb(:) = snoalb(:) / 100.0
+        deallocate(rarray)
+        deallocate(maxsnowalb)
+        deallocate(scalefactor)
+
+     else
+
+        call mpas_log_write('*****************************************************************', messageType=MPAS_LOG_ERR)
+        call mpas_log_write('Invalid maximum snow albedo dataset '''//trim(config_maxsnowalbedo_data) &
+                                      //''' selected for config_maxsnowalbedo_data',             messageType=MPAS_LOG_ERR)
+        call mpas_log_write('   Possible options are: ''MODIS'', ''NCEP''',                      messageType=MPAS_LOG_ERR)
+        call mpas_log_write('*****************************************************************', messageType=MPAS_LOG_ERR)
+        call mpas_log_write('Please correct the namelist.', messageType=MPAS_LOG_CRIT)
+
+     end if
+
+ end subroutine interp_snoalb
 
 
 !==================================================================================================
